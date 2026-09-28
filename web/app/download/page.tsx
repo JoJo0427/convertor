@@ -213,15 +213,10 @@ export default function DownloadPage() {
                 aria-pressed={selected}
                 title={option.detail}
                 disabled={running}
-                className="tile text-left"
-                style={
-                  selected
-                    ? { borderColor: "var(--select)", background: "var(--select-wash)" }
-                    : undefined
-                }
+                className="choice"
               >
-                <span className="block t-small t-strong">{option.label}</span>
-                <span className="mt-0.5 block t-micro text-[var(--ink-faint)]">
+                <span className="t-small t-strong">{option.label}</span>
+                <span className="t-micro text-[var(--ink-faint)]">
                   {option.detail}
                 </span>
               </button>

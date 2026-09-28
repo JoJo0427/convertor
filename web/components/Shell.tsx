@@ -267,12 +267,21 @@ export function Shell({ children }: { children: ReactNode }) {
       </a>
 
       <header className="flex h-12 flex-none items-center gap-3 border-b border-[var(--line)] bg-[var(--surface)] px-4">
-        <Link href="/" className="flex items-center gap-1.5">
+        {/* shrink-0 so the wordmark is never the thing that gives way. Adding a
+            fifth nav item pushed the header past the available width on a phone
+            and the brand was compressed until "Convertor" was clipped — the one
+            piece of text in the app that should never be cut. */}
+        <Link href="/" className="flex shrink-0 items-center gap-1.5">
           <Icons.layers className="h-3.5 w-3.5" />
           <span className="text-[13px] font-[600] tracking-[-0.01em]">Convertor</span>
         </Link>
 
-        <nav className="flex items-center" aria-label="Main">
+        {/* The nav scrolls instead of crushing its neighbours. scrollbar-none
+            keeps that invisible on desktop, where it never triggers. */}
+        <nav
+          className="flex min-w-0 items-center overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          aria-label="Main"
+        >
           {NAV.map((item) => {
             const active =
               item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
@@ -281,7 +290,7 @@ export function Shell({ children }: { children: ReactNode }) {
                 key={item.href}
                 href={item.href}
                 aria-current={active ? "page" : undefined}
-                className={`flex h-6 items-center rounded-[4px] px-2 text-[12px] font-[550]
+                className={`flex h-6 shrink-0 items-center rounded-[4px] px-2 text-[12px] font-[550]
                   transition-colors duration-[120ms] ${
                     active
                       ? "bg-[var(--select-wash)] text-[var(--ink)]"
