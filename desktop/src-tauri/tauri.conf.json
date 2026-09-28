@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Convertor",
+  "version": "1.0.0",
+  "identifier": "com.convertor.app",
+  "build": {
+    "frontendDist": "../../web/out-build",
+    "beforeBuildCommand": "npm --prefix ../web run build:desktop"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Convertor",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "dragDropEnabled": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "dmg",
+      "app",
+      "msi"
+    ],
+    "icon": [
+      "icons/icon.icns",
+      "icons/icon.ico",
+      "icons/128x128.png"
+    ],
+    "resources": {
+      "../../engine/app": "app",
+      "../runtime": "runtime",
+      "binaries": "binaries",
+      "../../engine/requirements-pack-parquet.txt": "requirements-pack-parquet.txt",
+      "../../engine/requirements-pack-pdfword.txt": "requirements-pack-pdfword.txt"
+    },
+    "externalBin": [],
+    "macOS": {
+      "minimumSystemVersion": "13.0"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    }
+  }
+}

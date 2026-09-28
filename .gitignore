@@ -1,0 +1,36 @@
+# Build output and fetched runtimes. All of this is reproducible from source, and
+# together it is 5 GB — committing it makes the repo unusable, and a git worktree
+# (which is how work gets delegated here) unusable with it.
+
+# Rust / Tauri
+desktop/src-tauri/target/
+
+# Fetched at build time by desktop/bundle_binaries.py and the runtime step
+desktop/runtime/
+desktop/src-tauri/binaries/
+
+# Node
+node_modules/
+web/.next/
+web/out/
+web/out-build/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Engine workspace, if anyone ever runs it in-tree
+data/
+*.db
+
+# Local environment
+.env
+.env.local
+
+# macOS
+.DS_Store
+
+# graphify output is regenerable from the sources
+graphify-out/

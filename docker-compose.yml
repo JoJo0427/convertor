@@ -1,0 +1,38 @@
+# One command brings up the whole workspace. The engine is not published to the
+# host: the browser only ever talks to the web service, which proxies /api to it.
+# That keeps the VM deployment a single open port.
+
+services:
+  engine:
+    build: ./engine
+    restart: unless-stopped
+    environment:
+      CONVERTOR_WORKSPACE: /data
+      CONVERTOR_MAX_UPLOAD_MB: ${CONVERTOR_MAX_UPLOAD_MB:-2048}
+      CONVERTOR_CONCURRENCY: ${CONVERTOR_CONCURRENCY:-3}
+      # Left empty, Phase 4 intelligent workflows stay switched off and no
+      # conversion ever contacts an outside service.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CONVERTOR_AI_MODEL: ${CONVERTOR_AI_MODEL:-claude-opus-5}
+    volumes:
+      - workspace:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  web:
+    build: ./web
+    restart: unless-stopped
+    environment:
+      ENGINE_URL: http://engine:8000
+    ports:
+      - "${CONVERTOR_PORT:-3000}:3000"
+    depends_on:
+      engine:
+        condition: service_healthy
+
+volumes:
+  workspace:

@@ -1,0 +1,3 @@
+# Pack: parquet — Apache Parquet read and write.
+# pyarrow is 132 MB and nothing else depends on it.
+pyarrow==21.0.0

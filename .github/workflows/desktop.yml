@@ -1,0 +1,152 @@
+# Builds the desktop app for macOS and Windows.
+#
+# The Windows installer cannot be produced on a Mac, and the macOS app cannot be
+# produced on Windows. This is the only way to get both from one commit, and the
+# only way anyone can verify the Windows build actually runs.
+
+name: desktop
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14          # Apple silicon
+            target: aarch64-apple-darwin
+            python: aarch64-apple-darwin
+            bundles: app,dmg
+          - os: macos-13          # Intel
+            target: x86_64-apple-darwin
+            python: x86_64-apple-darwin
+            bundles: app,dmg
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            python: x86_64-pc-windows-msvc
+            bundles: msi
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # A relocatable interpreter, so the app does not depend on a Python
+      # being installed on the user's machine.
+      - name: Fetch the Python runtime
+        shell: bash
+        run: |
+          url=$(curl -s https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest \
+            | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)
+          for a in d['assets']:
+              n=a['name']
+              if '3.12' in n and '${{ matrix.python }}' in n and n.endswith('install_only.tar.gz'):
+                  print(a['browser_download_url']); break")
+          mkdir -p desktop/runtime
+          curl -sL "$url" -o /tmp/py.tar.gz
+          tar xzf /tmp/py.tar.gz -C desktop/runtime --strip-components=1
+
+      - name: Install the base tier
+        shell: bash
+        run: |
+          py=desktop/runtime/bin/python3
+          [ -f "$py" ] || py=desktop/runtime/python.exe
+          "$py" -m pip install --upgrade pip
+          "$py" -m pip install -r engine/requirements-base.txt
+
+      # The base tier's native engines. Everything heavier — LibreOffice,
+      # Pandoc, Tesseract — is a pack the app fetches on demand.
+      - name: Bundle the base engines (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install ffmpeg ghostscript librsvg potrace
+          # Fails the build if any dependency is missing from the bundle, which
+          # is the only thing standing between a Homebrew link and an app that
+          # dies on first use. See R30 in TEST_PLAN.md.
+          python3 desktop/bundle_binaries.py ffmpeg ffprobe gs rsvg-convert potrace
+
+      - name: Bundle the base engines (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p desktop/src-tauri/binaries
+          # Windows builds are self-contained .exe files, so there is no
+          # equivalent of the dylib relocation the macOS step does.
+          curl -sL https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip -o /tmp/ff.zip
+          unzip -q /tmp/ff.zip -d /tmp/ff
+          find /tmp/ff -name 'ffmpeg.exe'  -exec cp {} desktop/src-tauri/binaries/ \;
+          find /tmp/ff -name 'ffprobe.exe' -exec cp {} desktop/src-tauri/binaries/ \;
+
+          # engines.py resolves by the Unix binary name plus ".exe", so each
+          # file has to land under the name it looks for: Ghostscript ships as
+          # gswin64c.exe and would never be found as "gs".
+          choco install --no-progress -y ghostscript potrace
+          gs=$(find /c/Program\ Files /c/ProgramData/chocolatey -name gswin64c.exe 2>/dev/null | head -1)
+          [ -n "$gs" ] && cp "$gs" desktop/src-tauri/binaries/gs.exe
+          pot=$(find /c/Program\ Files /c/ProgramData/chocolatey -name potrace.exe 2>/dev/null | head -1)
+          [ -n "$pot" ] && cp "$pot" desktop/src-tauri/binaries/potrace.exe
+
+          # librsvg has no standalone Windows build. MSYS2 is preinstalled on the
+          # runner and packages it, but rsvg-convert.exe needs its DLLs beside
+          # it, so the whole mingw64 bin directory's DLLs come along. Leaving
+          # rsvg out would mean shipping a Windows app where every SVG
+          # conversion fails — which is regression R14, on a new platform.
+          /c/msys64/usr/bin/pacman -S --noconfirm --needed mingw-w64-x86_64-librsvg || true
+          if [ -f /c/msys64/mingw64/bin/rsvg-convert.exe ]; then
+            cp /c/msys64/mingw64/bin/rsvg-convert.exe desktop/src-tauri/binaries/
+            cp /c/msys64/mingw64/bin/*.dll desktop/src-tauri/binaries/
+          fi
+          ls -la desktop/src-tauri/binaries/
+
+      # Nothing above is allowed to fail silently: a base engine that did not
+      # make it into the bundle must stop the build, not ship.
+      - name: Check the base tier is complete
+        shell: bash
+        run: |
+          cd desktop/src-tauri/binaries
+          missing=""
+          for b in ffmpeg ffprobe gs rsvg-convert potrace; do
+            if [ ! -f "$b" ] && [ ! -f "$b.exe" ]; then missing="$missing $b"; fi
+          done
+          if [ -n "$missing" ]; then echo "missing base engines:$missing"; exit 1; fi
+          echo "base tier complete"
+
+      # The pip packs install from these lists at runtime. They are declared as
+      # bundle resources, so a rename would fail the install rather than the
+      # build — check them here, where it is cheap.
+      - name: Check the pack requirements lists exist
+        shell: bash
+        run: |
+          for f in requirements-pack-parquet.txt requirements-pack-pdfword.txt; do
+            test -f "engine/$f" || { echo "engine/$f is missing"; exit 1; }
+          done
+          echo "pack requirements present"
+
+      - name: Build the interface
+        run: npm --prefix web ci && npm --prefix web run build:desktop
+
+      - name: Build the app
+        working-directory: desktop
+        run: |
+          npm ci
+          npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: convertor-${{ matrix.target }}
+          path: |
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi

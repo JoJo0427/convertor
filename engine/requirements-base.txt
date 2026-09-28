@@ -1,0 +1,31 @@
+# The base tier — everything the desktop app installs up front.
+# Covers images, vector, PDF, structured data, media, archives and subtitles.
+fastapi==0.118.0
+uvicorn[standard]==0.37.0
+python-multipart==0.0.20
+
+# Images
+pillow==11.3.0
+pillow-heif==0.21.0
+
+# PDF
+pypdf==5.9.0
+cryptography==45.0.7
+pymupdf==1.28.2
+
+# Structured data
+pandas==2.3.2
+openpyxl==3.1.5
+odfpy==1.4.1
+xlrd==2.0.1
+pyyaml==6.0.2
+lxml==5.3.0
+tabulate==0.9.0
+beautifulsoup4==4.13.4
+html5lib==1.1
+
+# Markup to PDF
+weasyprint==63.1
+
+# Phase 4 intelligent workflows (inert without ANTHROPIC_API_KEY, ~2 MB)
+anthropic==0.69.0

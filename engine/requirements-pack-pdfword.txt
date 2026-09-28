@@ -1,0 +1,4 @@
+# Pack: pdfword — PDF to Word with tables, images and layout.
+# Pulls OpenCV (~87 MB) and onnxruntime (~58 MB), which is why it is not base.
+pdf2docx==0.5.13
+pymupdf4llm==1.28.2
