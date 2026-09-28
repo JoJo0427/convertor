@@ -360,7 +360,10 @@ export interface Settings {
    *  now, and a change takes effect on the next conversion. */
   maxUploadMb: number;
   workerConcurrency: number;
+  /** Masked on read — the real key is write-only. Sending a masked value back is
+   *  ignored by the engine, so an empty field means "leave it alone". */
   anthropicApiKey: string;
+  hasAnthropicKey: boolean;
   aiModel: string;
 }
 

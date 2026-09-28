@@ -315,6 +315,77 @@ check("mpg -> wmv uses Windows Media codecs (R41)",
       err or f"video={video_codec} audio={audio_codec}")
 drop(fid)
 
+# --------------------------------------------------------------- 10. settings
+def patch_settings(body):
+    req = urllib.request.Request(B + "/api/settings", method="PATCH",
+                                 headers={"Content-Type": "application/json"},
+                                 data=json.dumps(body).encode())
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.load(r)["settings"]
+
+
+def get_settings():
+    with urllib.request.urlopen(B + "/api/settings", timeout=30) as r:
+        return json.load(r)["settings"]
+
+
+original = get_settings()
+
+# R44: a setting must take effect without a restart.
+patch_settings({"maxUploadMb": 321})
+with urllib.request.urlopen(B + "/api/system", timeout=30) as r:
+    effective = json.load(r)["limits"]["maxUploadBytes"] // (1024 * 1024)
+check("a settings change takes effect without a restart (R44)", effective == 321,
+      f"{effective} MB")
+
+# R48: what is stored must equal what is used. Rubbish that is accepted, shown
+# back, and then ignored is worse than a rejection.
+for bad in (-5, 0, "abc", None):
+    stored = patch_settings({"maxUploadMb": bad})["maxUploadMb"]
+    with urllib.request.urlopen(B + "/api/system", timeout=30) as r:
+        used = json.load(r)["limits"]["maxUploadBytes"] // (1024 * 1024)
+    check(f"maxUploadMb={bad!r} is stored as what is actually used (R48)",
+          stored == used, f"stored {stored}, used {used}")
+
+# R49: the API key is write-only.
+patch_settings({"anthropicApiKey": "sk-ant-ACCEPTANCESECRET-9999"})
+returned = get_settings()
+check("the API key is never returned in full (R49)",
+      "ACCEPTANCESECRET" not in str(returned.get("anthropicApiKey", "")),
+      str(returned.get("anthropicApiKey")))
+check("the interface is still told a key is set (R49)",
+      returned.get("hasAnthropicKey") is True)
+# Writing the mask back must not overwrite the real key.
+patch_settings({"anthropicApiKey": returned["anthropicApiKey"]})
+check("writing the masked value back does not clobber the key (R49)",
+      get_settings().get("hasAnthropicKey") is True)
+
+patch_settings({"anthropicApiKey": "",
+                "maxUploadMb": original.get("maxUploadMb", 2048),
+                "workerConcurrency": original.get("workerConcurrency", 3)})
+
+# ------------------------------------------------------------- 11. downloader
+with urllib.request.urlopen(B + "/api/download", timeout=30) as r:
+    dl = json.load(r)
+check("the downloader is available", dl["available"] is True)
+check("the downloader can merge separate streams (R47)", dl["canMerge"] is True,
+      "FFmpeg not found by yt-dlp" if not dl["canMerge"] else "")
+check("the downloader offers a video and an audio-only choice",
+      {"best", "audio"} <= {q["id"] for q in dl["qualities"]})
+
+for bad, why in (("", "empty"), ("not a url", "not a url"), ("ftp://x/y", "ftp")):
+    req = urllib.request.Request(B + "/api/download", method="POST",
+                                 headers={"Content-Type": "application/json"},
+                                 data=json.dumps({"url": bad}).encode())
+    try:
+        urllib.request.urlopen(req, timeout=30)
+        check(f"a {why} link is refused", False, "it was accepted")
+    except urllib.error.HTTPError as e:
+        body = json.loads(e.read())
+        check(f"a {why} link is refused with a reason", e.code == 400
+              and bool(body["detail"]["error"]["title"]),
+              body["detail"]["error"]["title"])
+
 print(f"\n  {len(passed)} passed, {len(failed)} failed")
 if failed:
     print("  failed:", ", ".join(failed))

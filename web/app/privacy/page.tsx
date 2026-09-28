@@ -56,6 +56,8 @@ export default function PrivacyPage() {
   const [storage, setStorage] = useState<StorageStats | null>(null);
   const [system, setSystem] = useState<SystemInfo | null>(null);
   const [working, setWorking] = useState(false);
+  // Held separately from `settings` because the stored key is never returned.
+  const [keyDraft, setKeyDraft] = useState("");
   const [flash, setFlash] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -238,16 +240,39 @@ export default function PrivacyPage() {
                 </Field>
                 <Field
                   label="Anthropic API key"
-                  help="Only needed for the optional intelligent conversions. Stored in this machine's workspace database and sent to no one but Anthropic, when you run one of those conversions."
+                  help={
+                    settings.hasAnthropicKey
+                      ? `A key is set (${settings.anthropicApiKey}). Type a new one to replace it, or clear the box and press Remove.`
+                      : "Only needed for the optional intelligent conversions. Stored in this machine's workspace database and sent to no one but Anthropic, when you run one of those conversions."
+                  }
                 >
                   {(id) => (
-                  <TextInput
-                    id={id}
-                    type="password"
-                    value={settings.anthropicApiKey}
-                    placeholder="sk-ant-…"
-                    onChange={(value) => update({ anthropicApiKey: value })}
-                  />
+                    <div className="flex items-center gap-2">
+                      {/* Deliberately not bound to the stored value: the engine
+                          returns the key masked, and a field that round-tripped
+                          its own display value would write the mask back as the
+                          key. Empty means "leave what is there alone". */}
+                      <TextInput
+                        id={id}
+                        type="password"
+                        value={keyDraft}
+                        placeholder={
+                          settings.hasAnthropicKey ? "unchanged" : "sk-ant-…"
+                        }
+                        onChange={setKeyDraft}
+                      />
+                      <Button
+                        size="sm"
+                        variant={keyDraft ? "default" : "quiet"}
+                        disabled={!keyDraft && !settings.hasAnthropicKey}
+                        onClick={async () => {
+                          await update({ anthropicApiKey: keyDraft });
+                          setKeyDraft("");
+                        }}
+                      >
+                        {keyDraft ? "Save" : "Remove"}
+                      </Button>
+                    </div>
                   )}
                 </Field>
                 <Field label="Model" help="Used for intelligent conversions.">

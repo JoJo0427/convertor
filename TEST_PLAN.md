@@ -502,6 +502,12 @@ recurrence is unmistakable. These run on every change.
 | R45 | **A pack told the user to run a shell command** | any pack's `manualHint` or `unavailableReason` contains `brew`, `apt-get`, `choco` or `pip install` as the only route to a capability |
 | R46 | A pack reported missing while its capability worked | the OCR pack reports `installed: false` on a build where `tesseract` is available and OCR conversions succeed |
 | R47 | Downloader could not merge streams | `GET /api/download` reports `canMerge: false` on a build that has FFmpeg, which silently caps every download at a single pre-merged stream |
+| R48 | **A setting was stored, displayed, and ignored** | `PATCH /api/settings` with a nonsense `maxUploadMb`, then compare the stored value with `system.limits.maxUploadBytes` — they must agree |
+| R49 | **The API key was returned in plain text** | `GET /api/settings` contains the key rather than a mask, or writing the mask back clears the stored key |
+| R50 | **A download reported files it did not create** | download into a folder containing an unrelated file; that file appears in the job's `files`, or an audio-only download reports no file at all |
+| R51 | Cancelling a download was reported as a failure | cancelling mid-download ends with `status: failed` instead of `cancelled` |
+| R52 | Searchable PDF sized in pixels instead of points | OCR of a 4000px image produces a PDF page far larger than the paper it represents |
+| R53 | **A pack installed and its route stayed dead** | with a capability cached by `lru_cache`, install the pack: `engines.refresh()` runs, the pack reports installed, and the route is still unavailable until the process restarts |
 
 ---
 
@@ -554,7 +560,7 @@ Stated so the gaps are known rather than assumed:
 
 | Stage | Contents | Gate |
 |---|---|---|
-| **Fast** (< 2 min) | T1, T2, T3, T6, R01–R47 | Must pass before any commit |
+| **Fast** (< 2 min) | T1, T2, T3, T6, R01–R53 | Must pass before any commit |
 | **Standard** (< 15 min) | + T4, T7, T8, T9, T11 | Must pass before a merge |
 | **Full** (< 90 min) | + T5, all `[slow]`, T10 automatable | Must pass before a release, and after any engine-image change |
 | **Manual** | T10 `[manual]` | Before a release |
@@ -734,3 +740,55 @@ That change introduced R46 immediately: the Docker image has Tesseract but not
 RapidOCR, so the pack began reporting itself missing while OCR worked perfectly.
 `Pack.satisfied_by` now expresses "this capability is already here by another
 route" — a pack describes a *capability*, not a particular implementation of one.
+
+### R48–R50, found by asking what happens when the input is wrong
+
+Three defects in one sweep of the new code, all the same shape: the system
+accepted something, reported success, and did something else.
+
+**R48.** Settings were validated when *read*, not when written. Typing `abc` into
+the upload limit stored `abc`, displayed `abc` back, and silently used the old
+value. `-5` stored `-5` and used 1 MB. The number on screen and the number in
+force were different, and nothing anywhere said so. Validation moved to the write
+path, so what is stored is what is used — the test asserts exactly that equality
+rather than any particular clamping rule.
+
+**R49.** `GET /api/settings` returned the Anthropic API key in full: in the page,
+in any log of that response, in any screenshot of the settings screen. For an app
+whose entire argument is that your data stays on your machine, handing a secret
+back out on every read is the wrong default. The key is write-only now, masked on
+read, with a `hasAnthropicKey` flag for the interface — and the write path ignores
+a masked value, because a form that round-trips its own display value would
+otherwise overwrite the real key with its own mask.
+
+**R50.** When a download finished, the app listed what it had produced by taking
+yt-dlp's hook-reported filenames and, if none of them existed, **listing the
+folder**. Audio extraction renames the file, so that fallback fired routinely —
+and reported whatever the user already had in their downloads folder as the
+result of this download. Now the folder is snapshotted before and diffed after.
+
+The audio-only case is what proves it: the hook reports a `.mp4`, the file on disk
+is a `.mp3`, and the old code could only have answered with unrelated files.
+
+### R53 — the cache that outlived the thing it described
+
+`ocr_backend()` and `html_pdf_renderer()` answer "what can this install actually
+do". Both were wrapped in `lru_cache`, and nothing cleared them.
+
+So installing the OCR pack went like this: the download succeeded, the checksum
+matched, the files landed, `engines.refresh()` ran, the installer's own
+verification passed (it asks `find_spec`, which is not cached), the pack reported
+itself installed — and the OCR route stayed unavailable, because the one function
+that decides it was still returning the cached answer from before the install.
+95 MB, a success message, and nothing worked until the app was restarted.
+
+`engines.refresh()` now clears registered capability caches as well as its own
+binary lookups, and each module registers its cache with `engines.on_refresh`.
+Verified in both directions — a simulated install makes the route available, a
+simulated removal takes it away — because a cache that is only cleared one way is
+half a fix.
+
+The general rule this earns: **anything that caches an answer to "can this install
+do X" has to be invalidated where X can change.** Both of these were written in
+this same session, which is how recent a decision has to be before it is worth
+re-checking.

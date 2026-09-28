@@ -282,10 +282,34 @@ async def get_setting(key: str) -> Any:
     return (await get_settings()).get(key)
 
 
+# How each setting is cleaned before it is stored. Validating at write rather than
+# at read matters: without it a user could type "abc" into the upload limit, have
+# it accepted, see it displayed back, and get the old limit — the setting would be
+# stored, shown, and ignored, with nothing anywhere saying so.
+_VALIDATORS: dict[str, Any] = {
+    "maxUploadMb": lambda v: _clamp_int(v, 1, 1024 * 1024, 2048),
+    "workerConcurrency": lambda v: _clamp_int(v, 1, 16, 3),
+    "tempRetentionHours": lambda v: _clamp_int(v, 0, 24 * 365, 24),
+    "outputRetentionDays": lambda v: _clamp_int(v, 0, 3650, 0),
+    "anthropicApiKey": lambda v: str(v or "").strip(),
+    "aiModel": lambda v: str(v or "").strip() or DEFAULT_SETTINGS["aiModel"],
+}
+
+
+def _clamp_int(value: Any, low: int, high: int, fallback: int) -> int:
+    try:
+        return max(low, min(high, int(value)))
+    except (TypeError, ValueError):
+        return fallback
+
+
 async def update_settings(values: dict) -> dict:
     for key, value in values.items():
         if key not in DEFAULT_SETTINGS:
             continue
+        validate = _VALIDATORS.get(key)
+        if validate is not None:
+            value = validate(value)
         await execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
             (key, json.dumps(value)),

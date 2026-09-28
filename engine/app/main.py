@@ -1001,14 +1001,36 @@ async def rerun(job_id: str, payload: dict = Body(default={})) -> dict:
 # ------------------------------------------------------------------- settings
 
 
+def _redact(settings: dict) -> dict:
+    """Never hand a secret back out.
+
+    The API key is write-only over the API. It was being returned in full by
+    every GET, which puts it in the page, in any log of the response and in any
+    screenshot of the settings screen — for an app whose entire argument is that
+    your data stays yours. The interface needs to know whether a key is set and
+    roughly which one, not what it is.
+    """
+    safe = dict(settings)
+    key = str(safe.get("anthropicApiKey") or "")
+    safe["anthropicApiKey"] = f"{key[:7]}…{key[-4:]}" if len(key) > 14 else (
+        "••••••••" if key else ""
+    )
+    safe["hasAnthropicKey"] = bool(key)
+    return safe
+
+
 @app.get("/api/settings")
 async def read_settings() -> dict:
-    return {"settings": await db.get_settings()}
+    return {"settings": _redact(await db.get_settings())}
 
 
 @app.patch("/api/settings")
 async def write_settings(payload: dict = Body(...)) -> dict:
-    return {"settings": await db.update_settings(payload)}
+    # A masked key read back from a GET must never be written back as the real
+    # one, which is what a form that round-trips its own value would do.
+    if "anthropicApiKey" in payload and "…" in str(payload["anthropicApiKey"]):
+        payload.pop("anthropicApiKey")
+    return {"settings": _redact(await db.update_settings(payload))}
 
 
 # ------------------------------------------------------------------- storage

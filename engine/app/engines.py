@@ -187,9 +187,34 @@ def status() -> list[dict]:
     ]
 
 
+# Caches elsewhere that answer "can this install do X". They have to be cleared
+# with this one, because a pack install changes the answer and nothing else will
+# ask again. Registered rather than imported, so engines.py keeps knowing nothing
+# about converters.
+_invalidators: list = []
+
+
+def on_refresh(clear) -> None:
+    """Register a cache to clear whenever engine availability changes."""
+    if clear not in _invalidators:
+        _invalidators.append(clear)
+
+
 def refresh() -> None:
-    """Forget cached lookups, so a newly installed engine is picked up."""
+    """Forget cached lookups, so a newly installed engine is picked up.
+
+    Anything that caches a capability decision must be cleared here. When it was
+    only `_resolve`, installing the OCR pack left `ocr_backend()` returning its
+    cached "nothing available": the pack downloaded, verified, reported itself
+    installed, and the route stayed dead until the app was restarted — the exact
+    failure the pack system exists to prevent.
+    """
     _resolve.cache_clear()
+    for clear in _invalidators:
+        try:
+            clear()
+        except Exception:  # noqa: BLE001 - one bad invalidator must not block the rest
+            pass
 
 
 async def run(

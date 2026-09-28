@@ -295,6 +295,10 @@ def _run(item: Download, quality: str, directory: Path, subtitles: bool) -> None
                 produced.append(name)
 
     directory.mkdir(parents=True, exist_ok=True)
+    # What was already there. The only reliable way to know what this download
+    # produced is to diff the folder, because yt-dlp's hooks report the name it
+    # was writing *before* postprocessing, and extracting audio renames the file.
+    existing = {p for p in directory.iterdir() if p.is_file()}
     options: dict = {
         "outtmpl": str(directory / "%(title)s.%(ext)s"),
         "format": preset["format"],
@@ -328,16 +332,26 @@ def _run(item: Download, quality: str, directory: Path, subtitles: bool) -> None
         title = ""
         if isinstance(info, dict):
             title = info.get("title") or ""
-        # The hooks report pre-postprocessing names, so trust the directory for
-        # what actually exists rather than what yt-dlp said it would write.
-        final = sorted({p for p in produced if Path(p).exists()})
-        if not final:
-            final = [str(p) for p in directory.glob("*") if p.is_file()][-5:]
+        # Anything in the folder that was not there before, plus any hook-reported
+        # path that still exists. Never a bare listing of the folder: the previous
+        # fallback did exactly that, so a download whose file had been renamed by
+        # postprocessing reported unrelated files the user already had as its own
+        # output.
+        appeared = {p for p in directory.iterdir() if p.is_file()} - existing
+        appeared |= {Path(p) for p in produced if Path(p).exists()}
+        final = sorted(str(p) for p in appeared if not p.name.startswith("."))
         _set(item.id, status="completed", phase="Finished", progress=1.0,
              title=title or item.title, files=final, finished=time.time())
     except _Cancelled:
         _set(item.id, status="cancelled", phase="Cancelled", finished=time.time())
     except Exception as error:  # noqa: BLE001 - reported, never swallowed
+        # yt-dlp catches what a progress hook raises and re-raises its own type,
+        # so a cancel can arrive here wearing the wrong coat. Reporting it as a
+        # failure would put an error in front of someone who pressed Cancel.
+        if item.id in _cancelled or isinstance(error.__cause__, _Cancelled):
+            _set(item.id, status="cancelled", phase="Cancelled",
+                 finished=time.time())
+            return
         readable = _readable_error(item.url, error)
         _set(item.id, status="failed", phase="Failed", finished=time.time(),
              error=readable.to_dict())

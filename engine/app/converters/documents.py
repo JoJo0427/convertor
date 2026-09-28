@@ -899,6 +899,11 @@ def _pdf_structure_options(source: str, target: str) -> list[Option]:
 
 
 
+# Installing a pack changes what this answers, so it is cleared with the
+# engine lookups rather than living until the next restart.
+engines.on_refresh(html_pdf_renderer.cache_clear)
+
+
 def register_all() -> None:
     register(Converter(
         id="doc.office",

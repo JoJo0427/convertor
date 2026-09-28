@@ -32,8 +32,14 @@ OCR_INPUTS = ("png", "jpeg", "webp", "tiff", "bmp", "gif", "heic", "pdf")
 def ocr_backend() -> str:
     if engines.available("tesseract"):
         return "tesseract"
-    if importlib.util.find_spec("rapidocr_onnxruntime") is not None:
-        return "rapidocr"
+    try:
+        if importlib.util.find_spec("rapidocr_onnxruntime") is not None:
+            return "rapidocr"
+    except (ImportError, ValueError):
+        # find_spec raises rather than returning None for a package that is
+        # present but broken — a half-finished install, or a name shadowed by
+        # something without a spec. Either way the answer is "cannot use it".
+        pass
     return ""
 
 
@@ -154,11 +160,27 @@ def _rapidocr_pdf(image_path: Path, visible_image_path: Path, result: list,
         image_bytes = BytesIO()
         visible.convert("RGB").save(image_bytes, "PNG")
 
+    # Pixels are not points. Sizing the page by pixel count makes a 4000px photo
+    # a 55-inch page, which opens looking absurd and prints on nothing. Convert at
+    # the image's own DPI, falling back to 96 when it declares none.
+    dpi = 96.0
+    try:
+        with Image.open(visible_image_path) as probe:
+            reported = probe.info.get("dpi")
+        if reported and float(reported[0]) > 1:
+            dpi = float(reported[0])
+    except Exception:  # noqa: BLE001 - a missing DPI is normal, not an error
+        pass
+    page_width = visible_width * 72.0 / dpi
+    page_height = visible_height * 72.0 / dpi
+
     doc = fitz.open()
-    page = doc.new_page(width=visible_width, height=visible_height)
+    page = doc.new_page(width=page_width, height=page_height)
     page.insert_image(page.rect, stream=image_bytes.getvalue())
-    scale_x = visible_width / recognised_width
-    scale_y = visible_height / recognised_height
+    # Boxes are in the recognised image's pixel space; text is placed in the
+    # page's point space.
+    scale_x = page_width / recognised_width
+    scale_y = page_height / recognised_height
     for box, text, _score in result:
         xs = [point[0] for point in box]
         ys = [point[1] for point in box]
@@ -320,6 +342,11 @@ def _ocr_warnings(inputs: Sequence[InputFile], target: str, options: dict) -> li
             "detail": "Accuracy drops sharply if the document is in a different language.",
         })
     return notices
+
+
+# Installing a pack changes what this answers, so it is cleared with the
+# engine lookups rather than living until the next restart.
+engines.on_refresh(ocr_backend.cache_clear)
 
 
 def register_all() -> None:
