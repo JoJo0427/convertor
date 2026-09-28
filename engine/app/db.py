@@ -69,6 +69,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "tempRetentionHours": 24,
     "outputRetentionDays": 0,  # 0 means keep outputs until cleared by hand
     "defaultPreset": "",
+    # Formerly environment variables, so changing one meant editing .env and
+    # restarting. config.apply_settings() adopts these on every write.
+    "maxUploadMb": config.ENV_DEFAULTS["maxUploadMb"],
+    "workerConcurrency": config.ENV_DEFAULTS["workerConcurrency"],
+    "anthropicApiKey": config.ENV_DEFAULTS["anthropicApiKey"],
+    "aiModel": config.ENV_DEFAULTS["aiModel"],
 }
 
 
@@ -265,6 +271,13 @@ async def get_settings() -> dict:
     return {**DEFAULT_SETTINGS, **stored}
 
 
+async def load_live_settings() -> dict:
+    """Push stored settings into config at startup, before anything reads them."""
+    settings = await get_settings()
+    config.apply_settings(settings)
+    return settings
+
+
 async def get_setting(key: str) -> Any:
     return (await get_settings()).get(key)
 
@@ -277,4 +290,7 @@ async def update_settings(values: dict) -> dict:
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
             (key, json.dumps(value)),
         )
-    return await get_settings()
+    settings = await get_settings()
+    # Live immediately: this is the whole point of these no longer being env vars.
+    config.apply_settings(settings)
+    return settings

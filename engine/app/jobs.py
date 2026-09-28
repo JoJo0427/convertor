@@ -412,7 +412,7 @@ async def _run(job: Job) -> None:
     job.status = RUNNING
     job.emit()
 
-    semaphore = asyncio.Semaphore(config.WORKER_CONCURRENCY)
+    semaphore = asyncio.Semaphore(config.worker_concurrency())
 
     async def guarded(item: JobItem) -> None:
         async with semaphore:

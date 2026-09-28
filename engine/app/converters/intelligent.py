@@ -17,7 +17,8 @@ from ..errors import ConversionError
 from ..registry import Choice, Converter, InputFile, Option, RunContext, register
 from .base import NAMING_OPTION, OVERWRITE_OPTION, target_path
 
-MODEL = config.ANTHROPIC_MODEL
+# Read per call: the model is a live setting, not a constant.
+
 
 # Roughly four characters per token; chunk well below the window so a long
 # document is processed in full rather than silently truncated.
@@ -35,7 +36,7 @@ LANGUAGES = (
 
 
 def available() -> bool:
-    return bool(config.ANTHROPIC_API_KEY)
+    return bool(config.anthropic_api_key())
 
 
 def _client():
@@ -49,7 +50,7 @@ def _client():
                 "entirely on this machine and is unaffected."
             ),
             suggestions=[
-                "Set ANTHROPIC_API_KEY in your .env file and restart the container.",
+                "Add an Anthropic API key in Settings. It takes effect immediately.",
                 "Or choose a standard conversion — OCR, text extraction and document "
                 "conversion all work offline.",
             ],
@@ -63,7 +64,7 @@ def _client():
             detail="Intelligent workflows need the anthropic package.",
             suggestions=["Rebuild the engine image, which installs it automatically."],
         )
-    return AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
+    return AsyncAnthropic(api_key=config.anthropic_api_key())
 
 
 def _split(text: str, size: int = CHUNK_CHARACTERS) -> list[str]:
@@ -89,7 +90,7 @@ async def _ask(client, system: str, content: list | str, *, effort: str = "high"
     """One request, streamed, with server-side refusal fallback enabled."""
     text_parts: list[str] = []
     async with client.beta.messages.stream(
-        model=MODEL,
+        model=config.ai_model(),
         max_tokens=32000,
         betas=["server-side-fallback-2026-07-01"],
         fallbacks="default",
@@ -412,7 +413,7 @@ def _ai_warnings(inputs: Sequence[InputFile], target: str, options: dict) -> lis
         notices.append({
             "level": "error",
             "title": "No API key is configured",
-            "detail": "Set ANTHROPIC_API_KEY in your .env file and restart to enable "
+            "detail": "Add an Anthropic API key in Settings to enable "
                       "these workflows.",
         })
     return notices

@@ -259,6 +259,19 @@ _PERMISSIVE_MUXERS = frozenset({
 })
 
 
+# Codecs a strict container legally accepts beyond its declared default. FFmpeg
+# reports one default per stream type, which understates what some containers take:
+# a DVD carries AC-3 and LPCM audio as well as MP2, and re-encoding AC-3 to MP2 to
+# satisfy a "default" throws away quality for no reason. Verified by muxing each
+# combination with `-c copy` and checking the result.
+_ALSO_ACCEPTED: dict[str, frozenset[str]] = {
+    "dvd": frozenset({"ac3", "mp2", "pcm_dvd", "pcm_s16be", "mpeg2video"}),
+    "svcd": frozenset({"mp2", "ac3", "mpeg2video"}),
+    "asf": frozenset({"wmav1", "wmav2", "wmapro", "mp3",
+                      "wmv1", "wmv2", "wmv3", "msmpeg4v2", "msmpeg4v3"}),
+}
+
+
 def _codec_family(codec: str) -> str:
     """Group codecs that a strict container treats as interchangeable."""
     if codec.startswith("pcm_"):
@@ -303,6 +316,8 @@ def copy_is_sane(item: InputFile, target: str) -> bool:
             continue
         source = item.metadata.get(kind)
         if not source:
+            continue
+        if str(source) in _ALSO_ACCEPTED.get(muxer, frozenset()):
             continue
         if not default:
             # The container declares no default for this stream type, so it

@@ -69,6 +69,8 @@ def _pid_alive(pid: int) -> bool:
 async def lifespan(app: FastAPI):
     config.ensure_dirs()
     db.init()
+    # Stored settings replace what the environment supplied, before anything reads them.
+    await db.load_live_settings()
     # Installed packs have to be on sys.path before anything asks whether their
     # modules import, because that question is how route availability is decided.
     activated = packs.activate_site_dirs()
@@ -143,7 +145,7 @@ async def system() -> dict:
         "engines": engines.status(),
         "intelligentWorkflows": {
             "available": intelligent.available(),
-            "model": config.ANTHROPIC_MODEL if intelligent.available() else None,
+            "model": config.ai_model() if intelligent.available() else None,
         },
         "workspace": {
             "root": str(config.WORKSPACE_ROOT),
@@ -151,7 +153,7 @@ async def system() -> dict:
             "output": str(config.OUTPUT_DIR),
             "temp": str(config.TMP_DIR),
         },
-        "limits": {"maxUploadBytes": config.MAX_UPLOAD_BYTES},
+        "limits": {"maxUploadBytes": config.max_upload_bytes()},
         "build": config.BUILD_KIND,
         "packs": packs.summary(),
         "converterCount": len(registry.all_converters()),
@@ -312,7 +314,7 @@ async def upload(files: list[UploadFile]) -> dict:
             with path.open("wb") as handle:
                 while chunk := await upload_file.read(1024 * 1024):
                     written += len(chunk)
-                    if written > config.MAX_UPLOAD_BYTES:
+                    if written > config.max_upload_bytes():
                         raise ValueError("too_large")
                     handle.write(chunk)
         except ValueError:
@@ -323,7 +325,7 @@ async def upload(files: list[UploadFile]) -> dict:
                     "code": "too_large",
                     "title": f"{name} is too large",
                     "detail": f"The limit is "
-                              f"{config.MAX_UPLOAD_BYTES // (1024 * 1024)} MB per file.",
+                              f"{config.max_upload_bytes() // (1024 * 1024)} MB per file.",
                     "suggestions": [
                         "Raise CONVERTOR_MAX_UPLOAD_MB in your .env and restart.",
                     ],
