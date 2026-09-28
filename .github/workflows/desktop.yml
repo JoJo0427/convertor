@@ -130,7 +130,7 @@ jobs:
       - name: Check the pack requirements lists exist
         shell: bash
         run: |
-          for f in requirements-pack-parquet.txt requirements-pack-pdfword.txt; do
+          for f in requirements-pack-parquet.txt requirements-pack-pdfword.txt requirements-pack-ocr.txt; do
             test -f "engine/$f" || { echo "engine/$f is missing"; exit 1; }
           done
           echo "pack requirements present"

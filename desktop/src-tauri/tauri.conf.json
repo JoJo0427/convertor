@@ -40,7 +40,8 @@
       "../runtime": "runtime",
       "binaries": "binaries",
       "../../engine/requirements-pack-parquet.txt": "requirements-pack-parquet.txt",
-      "../../engine/requirements-pack-pdfword.txt": "requirements-pack-pdfword.txt"
+      "../../engine/requirements-pack-pdfword.txt": "requirements-pack-pdfword.txt",
+      "../../engine/requirements-pack-ocr.txt": "requirements-pack-ocr.txt"
     },
     "externalBin": [],
     "macOS": {

@@ -269,6 +269,7 @@ export function TextInput({
   min,
   max,
   step,
+  disabled,
   className = "",
 }: {
   id?: string;
@@ -279,6 +280,7 @@ export function TextInput({
   min?: number | null;
   max?: number | null;
   step?: number | null;
+  disabled?: boolean;
   className?: string;
 }) {
   return (
@@ -290,6 +292,7 @@ export function TextInput({
       min={min ?? undefined}
       max={max ?? undefined}
       step={step ?? undefined}
+      disabled={disabled}
       onChange={(event) => onChange(event.target.value)}
       className={`ctl w-full ${type === "number" ? "num" : ""} ${className}`}
     />

@@ -18,8 +18,8 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from . import (capabilities, config, converters, db, detect, engines, formats,
-               installer, jobs, packs, registry)
+from . import (capabilities, config, converters, db, detect, downloader, engines,
+               formats, installer, jobs, packs, registry)
 from .errors import ConversionError
 
 
@@ -240,6 +240,80 @@ async def pack_events(pack_id: str):
                 yield ": keep-alive\n\n"
                 # Nothing is installing and nothing started: do not hold the
                 # connection open forever waiting for something to report.
+                if current is None and idle >= 20:
+                    break
+
+    return StreamingResponse(stream(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    })
+
+
+# ------------------------------------------------------------------ downloading
+#
+# Separate from conversion on purpose: this is the one part of the app that
+# touches the network, and it is kept behind its own endpoints and its own screen
+# rather than blended into a workflow whose promise is that files stay local.
+
+
+@app.get("/api/download")
+async def download_overview() -> dict:
+    return downloader.summary()
+
+
+@app.post("/api/download/probe")
+async def download_probe(payload: dict = Body(...)) -> dict:
+    """Look up a URL's title and length without fetching the media."""
+    try:
+        return await asyncio.to_thread(downloader.probe, str(payload.get("url", "")))
+    except ConversionError as error:
+        raise HTTPException(status_code=400, detail={"error": error.to_dict()})
+
+
+@app.post("/api/download")
+async def download_start(payload: dict = Body(...)) -> dict:
+    try:
+        return {"download": downloader.start(
+            url=str(payload.get("url", "")),
+            quality=str(payload.get("quality", "best")),
+            directory=str(payload.get("directory", "")),
+            subtitles=bool(payload.get("subtitles", False)),
+        )}
+    except ConversionError as error:
+        raise HTTPException(status_code=400, detail={"error": error.to_dict()})
+
+
+@app.get("/api/download/{download_id}")
+async def download_state(download_id: str) -> dict:
+    found = downloader.state(download_id)
+    if found is None:
+        raise _fail(404, "not_found", "That download is no longer in memory",
+                    "It may have finished before this page connected.",
+                    ["Start it again if you still need it."])
+    return {"download": found}
+
+
+@app.post("/api/download/{download_id}/cancel")
+async def download_cancel(download_id: str) -> dict:
+    return {"download": downloader.cancel(download_id)}
+
+
+@app.get("/api/download/{download_id}/events")
+async def download_events(download_id: str):
+    async def stream():
+        previous: dict | None = None
+        idle = 0.0
+        while True:
+            current = await downloader.wait_for_change(download_id, previous)
+            if current != previous:
+                previous = current
+                idle = 0.0
+                yield f"data: {json.dumps(current)}\n\n"
+                if current and current["status"] != "running":
+                    break
+            else:
+                idle += 1.0
+                yield ": keep-alive\n\n"
                 if current is None and idle >= 20:
                     break
 

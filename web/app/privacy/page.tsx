@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { bytes } from "@/lib/format";
 import type { Settings, StorageStats, SystemInfo } from "@/lib/types";
-import { Button, Check, Icons, Section, Spinner } from "@/components/ui";
+import { Button, Check, Field, Icons, Section, Spinner, TextInput } from "@/components/ui";
 import { Packs } from "@/components/Packs";
 
 function StorageRow({
@@ -194,6 +194,73 @@ export default function PrivacyPage() {
                 label="Remove temporary files automatically"
                 help="Deletes each conversion's working folder as soon as it finishes. Turn off only when debugging a failure."
               />
+              {/* These four used to be environment variables, which meant a
+                  .env edit and an engine restart — not something a desktop user
+                  can do at all. Every one takes effect on the next conversion. */}
+              <div className="grid gap-3 border-t border-[var(--line)] pt-3 sm:grid-cols-2">
+                <Field
+                  label="Largest file accepted"
+                  help="Uploads above this are refused with a reason rather than failing part-way."
+                >
+                  {(id) => (
+                  <div className="flex items-center gap-2">
+                    <TextInput
+                      id={id}
+                      type="number"
+                      min={1}
+                      value={settings.maxUploadMb}
+                      onChange={(value) =>
+                        update({ maxUploadMb: Math.max(1, Number(value) || 1) })
+                      }
+                    />
+                    <span className="shrink-0 t-small text-[var(--ink-faint)]">MB</span>
+                  </div>
+                  )}
+                </Field>
+                <Field
+                  label="Files converted at once"
+                  help="Higher finishes a batch sooner and uses more memory and CPU."
+                >
+                  {(id) => (
+                  <TextInput
+                    id={id}
+                    type="number"
+                    min={1}
+                    max={16}
+                    value={settings.workerConcurrency}
+                    onChange={(value) =>
+                      update({
+                        workerConcurrency: Math.min(16, Math.max(1, Number(value) || 1)),
+                      })
+                    }
+                  />
+                  )}
+                </Field>
+                <Field
+                  label="Anthropic API key"
+                  help="Only needed for the optional intelligent conversions. Stored in this machine's workspace database and sent to no one but Anthropic, when you run one of those conversions."
+                >
+                  {(id) => (
+                  <TextInput
+                    id={id}
+                    type="password"
+                    value={settings.anthropicApiKey}
+                    placeholder="sk-ant-…"
+                    onChange={(value) => update({ anthropicApiKey: value })}
+                  />
+                  )}
+                </Field>
+                <Field label="Model" help="Used for intelligent conversions.">
+                  {(id) => (
+                  <TextInput
+                    id={id}
+                    value={settings.aiModel}
+                    onChange={(value) => update({ aiModel: value })}
+                  />
+                  )}
+                </Field>
+              </div>
+
               <div className="flex flex-wrap gap-1.5 pt-1">
                 <Button
                   size="sm"

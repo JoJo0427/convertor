@@ -356,6 +356,12 @@ export interface Settings {
   tempRetentionHours: number;
   outputRetentionDays: number;
   defaultPreset: string;
+  /** These four were environment variables needing a restart. They are settings
+   *  now, and a change takes effect on the next conversion. */
+  maxUploadMb: number;
+  workerConcurrency: number;
+  anthropicApiKey: string;
+  aiModel: string;
 }
 
 export interface StorageStats {
@@ -363,4 +369,49 @@ export interface StorageStats {
   output: { path: string; bytes: number; files: number };
   temp: { path: string; bytes: number; files: number };
   database: { path: string; bytes: number };
+}
+
+/* ------------------------------------------------------------- downloading */
+
+export interface DownloadQuality {
+  id: string;
+  label: string;
+  detail: string;
+}
+
+export interface DownloadProbe {
+  kind: "single" | "playlist";
+  title: string;
+  count: number;
+  duration: number | null;
+  thumbnail: string | null;
+  uploader: string;
+  extension?: string;
+}
+
+export interface Download {
+  id: string;
+  url: string;
+  title: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  phase: string;
+  /** null when the server sent no total, so the bar goes indeterminate. */
+  progress: number | null;
+  downloaded: number;
+  total: number;
+  speed: string;
+  eta: string;
+  files: string[];
+  directory: string;
+  error: EngineError | null;
+  elapsed: number;
+}
+
+export interface DownloadOverview {
+  available: boolean;
+  defaultDirectory: string;
+  /** False when FFmpeg is missing, which caps quality at a single pre-merged stream. */
+  canMerge: boolean;
+  qualities: DownloadQuality[];
+  downloads: Download[];
 }

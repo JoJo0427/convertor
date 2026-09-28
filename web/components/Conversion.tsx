@@ -24,19 +24,6 @@ import {
 
 export type Mode = "each" | "combined" | "split";
 
-/** One glyph per goal. These carry meaning the label conveys only on reading,
- *  which is what makes them worth the space on a control used repeatedly. */
-const INTENT_ICON: Record<string, (p: { className?: string }) => React.ReactNode> = {
-  smaller: Icons.compress,
-  editable: Icons.pencil,
-  share: Icons.send,
-  web: Icons.globe,
-  quality: Icons.gem,
-  text: Icons.text,
-  audio: Icons.speaker,
-  print: Icons.printer,
-};
-
 function FormatTile({
   item,
   selected,
@@ -382,52 +369,19 @@ export function Conversion({
           )}
         </section>
 
-        {/* Two shortcuts into the same choice above. They share one strip so
-            the pane does not repeat the section shape three times — but they
-            are still buttons, with the glyph and the hint that make them
-            scannable on the twentieth use. */}
-        {mode === "each" &&
-          ((plan?.intents?.length ?? 0) > 0 || (plan?.recent?.length ?? 0) > 0) && (
+        {/* Recently used formats, as a shortcut into the same choice above.
+            There was a second strip here offering conversions by goal — "Make it
+            smaller", "Send to others" — which named an intention rather than a
+            format. It asked the user to translate what they wanted into our
+            vocabulary and then guessed a format on their behalf. The format tiles
+            and the settings below already say exactly what will happen, so the
+            goal strip was a third way to express the same choice, less precisely.
+            Recent stays: it offers formats, by name, that this person actually
+            picked before. */}
+        {mode === "each" && (plan?.recent?.length ?? 0) > 0 && (
             <div className="rule border-t border-[var(--line)] bg-[var(--raised)] px-[var(--pad)] py-2.5">
-              {(plan?.intents?.length ?? 0) > 0 && (
+              {(
                 <div className="flex gap-2.5">
-                  <span className="mt-1.5 w-12 shrink-0 t-micro text-[var(--ink-faint)]">
-                    By goal
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {plan!.intents.map((intent) => {
-                      const Glyph = INTENT_ICON[intent.id] ?? Icons.arrow;
-                      const active = target === intent.best;
-                      return (
-                        <button
-                          key={intent.id}
-                          onClick={() => onTargetChange(intent.best)}
-                          aria-pressed={active}
-                          title={intent.detail}
-                          className="shortcut"
-                          style={
-                            active
-                              ? {
-                                  borderColor: "var(--select)",
-                                  background: "var(--select-wash)",
-                                }
-                              : undefined
-                          }
-                        >
-                          <Glyph className="h-3.5 w-3.5 shrink-0 text-[var(--ink-faint)]" />
-                          {intent.label}
-                          <span className="t-micro text-[var(--ink-faint)]">
-                            {intent.options[0]?.label}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {(plan?.recent?.length ?? 0) > 0 && (
-                <div className="mt-2 flex gap-2.5">
                   <span className="mt-1.5 w-12 shrink-0 t-micro text-[var(--ink-faint)]">
                     Recent
                   </span>

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
+from functools import lru_cache
+from io import BytesIO
 from pathlib import Path
 from typing import Sequence
 
@@ -23,6 +26,31 @@ LANGUAGES = (
 )
 
 OCR_INPUTS = ("png", "jpeg", "webp", "tiff", "bmp", "gif", "heic", "pdf")
+
+
+@lru_cache(maxsize=1)
+def ocr_backend() -> str:
+    if engines.available("tesseract"):
+        return "tesseract"
+    if importlib.util.find_spec("rapidocr_onnxruntime") is not None:
+        return "rapidocr"
+    return ""
+
+
+def _ocr_requirement() -> str:
+    return "" if ocr_backend() else "OCR pack"
+
+
+def _require_ocr_backend() -> str:
+    backend = ocr_backend()
+    if not backend:
+        raise ConversionError(
+            code="engine_missing",
+            title="The OCR engine is not installed",
+            detail="This conversion requires the OCR pack, which is not installed.",
+            suggestions=["Install the OCR pack and try the conversion again."],
+        )
+    return backend
 
 
 def _ocr_options(source: str, target: str) -> list[Option]:
@@ -107,8 +135,42 @@ async def _tesseract(ctx: RunContext, image: Path, name: str, out_base: Path,
     return "" if output_type == "pdf" else produced.read_text("utf-8", "replace")
 
 
+def _rapidocr(image_path: Path) -> list:
+    from rapidocr_onnxruntime import RapidOCR
+
+    engine = RapidOCR()
+    result, _ = engine(str(image_path))
+    return result or []
+
+
+def _rapidocr_pdf(image_path: Path, visible_image_path: Path, result: list,
+                  output: Path) -> None:
+    import fitz
+    from PIL import Image
+
+    with Image.open(image_path) as recognised, Image.open(visible_image_path) as visible:
+        recognised_width, recognised_height = recognised.size
+        visible_width, visible_height = visible.size
+        image_bytes = BytesIO()
+        visible.convert("RGB").save(image_bytes, "PNG")
+
+    doc = fitz.open()
+    page = doc.new_page(width=visible_width, height=visible_height)
+    page.insert_image(page.rect, stream=image_bytes.getvalue())
+    scale_x = visible_width / recognised_width
+    scale_y = visible_height / recognised_height
+    for box, text, _score in result:
+        xs = [point[0] for point in box]
+        ys = [point[1] for point in box]
+        point = fitz.Point(min(xs) * scale_x, max(ys) * scale_y)
+        font_size = max(1, (max(ys) - min(ys)) * scale_y)
+        page.insert_text(point, str(text), fontsize=font_size, render_mode=3)
+    doc.save(str(output))
+    doc.close()
+
+
 async def _ocr_images(ctx: RunContext) -> list[Path]:
-    engines.require("tesseract")
+    backend = _require_ocr_backend()
     outputs: list[Path] = []
     total = len(ctx.inputs)
 
@@ -119,15 +181,30 @@ async def _ocr_images(ctx: RunContext) -> list[Path]:
             image = await asyncio.to_thread(_prepare, item.path, ctx.workdir, index)
 
         base = ctx.workdir / f"ocr-{index}"
-        if ctx.target == "pdf":
+        if backend == "tesseract" and ctx.target == "pdf":
             await _tesseract(ctx, image, item.name, base, "pdf")
             out = target_path(ctx, item.name, "pdf", index=index, suffix="-searchable")
             base.with_suffix(".pdf").replace(out)
             ctx.note("Searchable PDF created",
                      "The original picture is kept, with recognised text layered "
                      "invisibly on top so it can be selected and searched.")
-        else:
+        elif backend == "tesseract":
             text = await _tesseract(ctx, image, item.name, base, "txt")
+        else:
+            result = await asyncio.to_thread(_rapidocr, image)
+            text = "\n".join(str(entry[1]) for entry in result)
+            if ctx.target == "pdf":
+                out = target_path(
+                    ctx, item.name, "pdf", index=index, suffix="-searchable"
+                )
+                await asyncio.to_thread(
+                    _rapidocr_pdf, image, item.path, result, out
+                )
+                ctx.note("Searchable PDF created",
+                         "The original picture is kept, with recognised text layered "
+                         "invisibly on top so it can be selected and searched.")
+
+        if ctx.target != "pdf":
             words = len(text.split())
             if words == 0:
                 ctx.warn(
@@ -147,7 +224,7 @@ async def _ocr_pdf(ctx: RunContext) -> list[Path]:
     """Render each page to an image, then recognise it."""
     import fitz
 
-    engines.require("tesseract")
+    backend = _require_ocr_backend()
     outputs: list[Path] = []
     dpi = int(ctx.option("ocr_dpi", 300))
 
@@ -183,7 +260,11 @@ async def _ocr_pdf(ctx: RunContext) -> list[Path]:
                     _prepare, page_image, ctx.workdir, page_number
                 )
             base = ctx.workdir / f"ocr-out-{index}-{page_number}"
-            text = await _tesseract(ctx, page_image, item.name, base, "txt")
+            if backend == "tesseract":
+                text = await _tesseract(ctx, page_image, item.name, base, "txt")
+            else:
+                result = await asyncio.to_thread(_rapidocr, page_image)
+                text = "\n".join(str(entry[1]) for entry in result)
             if text.strip():
                 chunks.append(text.strip())
         doc.close()
@@ -249,7 +330,7 @@ def register_all() -> None:
         inputs=frozenset(f for f in OCR_INPUTS if f != "pdf"),
         outputs=frozenset(("txt", "md", "pdf")),
         run=_ocr_images,
-        engines=("tesseract",),
+        requires=_ocr_requirement,
         cardinality="one_to_one",
         # Below image.to_pdf so a plain image→PDF stays a plain image→PDF.
         quality=65,
@@ -264,7 +345,7 @@ def register_all() -> None:
         inputs=frozenset(("pdf",)),
         outputs=frozenset(("txt", "md")),
         run=_ocr_pdf,
-        engines=("tesseract",),
+        requires=_ocr_requirement,
         cardinality="one_to_one",
         # Below pdf.extract_text: a PDF with a text layer should never need OCR.
         quality=40,

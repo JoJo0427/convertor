@@ -9,6 +9,7 @@ import { Icons, Kbd, Spinner } from "./ui";
 
 const NAV = [
   { href: "/", label: "Convert" },
+  { href: "/download", label: "Download" },
   { href: "/formats", label: "Formats" },
   { href: "/history", label: "History" },
   { href: "/privacy", label: "Privacy" },

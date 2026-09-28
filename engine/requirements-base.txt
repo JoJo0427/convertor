@@ -29,3 +29,7 @@ weasyprint==63.1
 
 # Phase 4 intelligent workflows (inert without ANTHROPIC_API_KEY, ~2 MB)
 anthropic==0.69.0
+
+# Media downloader. Pure Python with no required dependencies, and it uses the
+# FFmpeg that is already bundled to merge separate video and audio streams.
+yt-dlp==2026.8.19

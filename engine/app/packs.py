@@ -296,17 +296,25 @@ PACKS: tuple[Pack, ...] = (
         summary="Recognises text in scanned documents and pictures, in 17 "
                 "languages.",
         unlocks=("Scanned PDF → text", "Image → text", "Searchable PDF"),
-        megabytes=50,
-        provides_engines=("tesseract",),
-        # Tesseract publishes no portable build for macOS, and the common Windows
-        # installer is third-party. Rather than ship a button that downloads
-        # something we cannot point at an official release, this pack states the
-        # one-line manual route. An installed Tesseract is picked up from PATH
-        # like any other engine.
-        sources=(),
-        manual_hint="macOS: brew install tesseract tesseract-lang · "
-                    "Windows: install Tesseract from the UB Mannheim project, "
-                    "then restart Convertor.",
+        megabytes=95,
+        # Not Tesseract.
+        #
+        # Tesseract is a system binary with no portable macOS build, so this pack
+        # used to be a button that told the user to run `brew install`. That is not
+        # an instruction you can give someone who has never opened a terminal, and
+        # a pack that cannot install itself is not a pack.
+        #
+        # RapidOCR is an ONNX model that installs from PyPI like any other Python
+        # package, so the pack now works the same way as every other one: press
+        # Install, wait, done. Tesseract is still preferred when it happens to be
+        # present (the Docker image has it, and it is better at dense text), and
+        # converters/ocr.py chooses between them at runtime.
+        provides_modules=("rapidocr_onnxruntime",),
+        requirements="requirements-pack-ocr.txt",
+        sources=(Source(platform="any", kind="pip", megabytes=95,
+                        installed_megabytes=320),),
+        manual_hint="Installing Tesseract yourself also works — it is used in "
+                    "preference when present.",
     ),
     Pack(
         id="archives",

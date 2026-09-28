@@ -3,6 +3,9 @@ import type {
   FormatDetail,
   FormatSummary,
   HistoryEntry,
+  Download,
+  DownloadOverview,
+  DownloadProbe,
   InputFile,
   Job,
   Pack,
@@ -185,6 +188,17 @@ export const api = {
   removePack: (id: string) =>
     request<{ pack: Pack }>(`/api/packs/${id}`, { method: "DELETE" }),
 
+  downloads: () => request<DownloadOverview>("/api/download"),
+  probeDownload: (url: string) => request<DownloadProbe>("/api/download/probe", json({ url })),
+  startDownload: (body: {
+    url: string;
+    quality: string;
+    directory: string;
+    subtitles: boolean;
+  }) => request<{ download: Download }>("/api/download", json(body)),
+  cancelDownload: (id: string) =>
+    request<{ download: Download | null }>(`/api/download/${id}/cancel`, json({})),
+
   storage: () => request<StorageStats>("/api/storage"),
   cleanStorage: (scopes: string[]) =>
     request<{ removed: Record<string, number>; storage: StorageStats }>(
@@ -293,6 +307,61 @@ export function watchPack(
         if (!pack?.job) return;
         onUpdate(pack.job);
         if (finish(pack.job) && poller) {
+          closed = true;
+          clearInterval(poller);
+        }
+      } catch {
+        if (poller) clearInterval(poller);
+      }
+    }, 1000);
+  };
+
+  return () => {
+    closed = true;
+    source.close();
+    if (poller) clearInterval(poller);
+  };
+}
+
+/** Follow one download to its end, with the same polling fallback as jobs. */
+export function watchDownload(
+  id: string,
+  onUpdate: (item: Download) => void,
+  onDone: (item: Download) => void,
+): () => void {
+  let closed = false;
+  let poller: ReturnType<typeof setInterval> | null = null;
+
+  const finish = (item: Download) => {
+    if (item.status !== "running") {
+      onDone(item);
+      return true;
+    }
+    return false;
+  };
+
+  const source = new EventSource(engineUrl(`/api/download/${id}/events`));
+
+  source.onmessage = (event) => {
+    if (closed) return;
+    const item = JSON.parse(event.data) as Download;
+    onUpdate(item);
+    if (finish(item)) {
+      closed = true;
+      source.close();
+    }
+  };
+
+  source.onerror = () => {
+    if (closed || poller) return;
+    source.close();
+    poller = setInterval(async () => {
+      try {
+        const { downloads } = await api.downloads();
+        const item = downloads.find((d) => d.id === id);
+        if (!item) return;
+        onUpdate(item);
+        if (finish(item) && poller) {
           closed = true;
           clearInterval(poller);
         }
