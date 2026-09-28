@@ -27,7 +27,9 @@ PORT = sys.argv[1]
 SP = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(tempfile.mkdtemp(prefix="convertor-acceptance-"))
 B = f"http://127.0.0.1:{PORT}"
 APP = Path("/Applications/Convertor.app/Contents/Resources")
-FFPROBE = APP / "binaries" / "ffprobe"
+BUNDLED_FFMPEG = APP / "binaries" / "ffmpeg"
+FFMPEG = str(BUNDLED_FFMPEG) if BUNDLED_FFMPEG.exists() else "ffmpeg"
+FFPROBE = str(BUNDLED_FFMPEG.with_name("ffprobe")) if BUNDLED_FFMPEG.exists() else "ffprobe"
 
 passed, failed = [], []
 
@@ -93,7 +95,7 @@ def probe(path, entries, stream=None):
 
 
 # ---------------------------------------------------------------- 1. media
-subprocess.run([str(APP / "binaries" / "ffmpeg"), "-v", "error",
+subprocess.run([FFMPEG, "-v", "error",
                 "-f", "lavfi", "-i", "testsrc=size=320x240:rate=24:duration=2",
                 "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
                 "-c:v", "libx264", "-c:a", "aac", "-y", str(SP / "a.mp4")], check=True)
@@ -261,6 +263,57 @@ else:
     check("removing a pack is reported as removed (R32)",
           after["installed"] is False and after["diskMegabytes"] == 0,
           f"installed={after['installed']} disk={after['diskMegabytes']}MB")
+
+# ---------------------------------------------------------------- 9. packaged regressions
+(SP / "page.html").write_text(
+    "<!doctype html><html><body><h1>Acceptance heading</h1>"
+    "<p><strong>Bold acceptance paragraph.</strong></p>"
+    "<table><tr><td>alpha</td><td>beta</td></tr>"
+    "<tr><td>gamma</td><td>delta</td></tr></table></body></html>")
+fid = upload(SP / "page.html")
+out, err = one(fid, "pdf")
+check("html -> pdf produces a PDF without taking the error path (R39)",
+      bool(out) and not err and out.read_bytes()[:4] == b"%PDF", err)
+check("html -> pdf reports no native-library loader failure (R39)",
+      not any(s in err.lower() for s in ("libgobject", "dlopen", "cffi")), err[:90])
+drop(fid)
+
+for name in ("wmv", "wma", "m4a", "vob"):
+    with urllib.request.urlopen(f"{B}/api/formats?q={name}", timeout=30) as r:
+        found = json.load(r)["formats"]
+    check(f"format catalog finds {name} by name (R42)",
+          any(f["id"] == name for f in found),
+          ", ".join(f["id"] for f in found) or "no matches")
+
+subprocess.run([FFMPEG, "-v", "error", "-f", "lavfi", "-i",
+                "sine=frequency=660:duration=2", "-c:a", "aac", "-y",
+                str(SP / "strict.m4a")], check=True)
+fid = upload(SP / "strict.m4a")
+out, err = one(fid, "wav")
+audio_codec = probe(out, "stream=codec_name", "a:0").get("codec_name", "") if out else ""
+check("m4a -> wav uses a PCM audio codec (R41)",
+      bool(out) and audio_codec.startswith("pcm"), err or audio_codec)
+drop(fid)
+
+subprocess.run([FFMPEG, "-v", "error",
+                "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25:duration=2",
+                "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+                "-c:v", "mpeg1video", "-c:a", "mp2", "-y", str(SP / "strict.mpg")],
+               check=True)
+fid = upload(SP / "strict.mpg")
+out, err = one(fid, "vob")
+video_codec = probe(out, "stream=codec_name", "v:0").get("codec_name", "") if out else ""
+check("mpg -> vob uses MPEG-2 video (R41)",
+      bool(out) and video_codec == "mpeg2video", err or video_codec)
+out, err = one(fid, "wmv")
+video_codec = probe(out, "stream=codec_name", "v:0").get("codec_name", "") if out else ""
+audio_codec = probe(out, "stream=codec_name", "a:0").get("codec_name", "") if out else ""
+check("mpg -> wmv uses Windows Media codecs (R41)",
+      bool(out)
+      and video_codec in {"wmv1", "wmv2", "wmv3", "msmpeg4v2", "msmpeg4v3"}
+      and audio_codec in {"wmav1", "wmav2"},
+      err or f"video={video_codec} audio={audio_codec}")
+drop(fid)
 
 print(f"\n  {len(passed)} passed, {len(failed)} failed")
 if failed:
