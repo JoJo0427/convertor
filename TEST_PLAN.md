@@ -498,6 +498,10 @@ recurrence is unmistakable. These run on every change.
 | R41 | **Stream copy produced unplayable files** | `m4a → wav` yields a non-PCM audio stream; `→ vob` yields anything but `mpeg2video`; `→ wmv` yields a non-WMV-family video codec |
 | R42 | WMV, WMA, M4A and VOB were unreachable by name | `/api/formats?q=wmv` (or wma, m4a, vob) returns no format whose id is that name |
 | R43 | Adding a curated format silently unclaimed an extension | any extension in the curated list resolves to `UNCLAIMED`, or `.asf`/`.m4a` resolve to a format that is not about that container |
+| R44 | Settings that needed a restart | `PATCH /api/settings` with a new `maxUploadMb`, then `GET /api/system`, and `limits.maxUploadBytes` still reports the old value |
+| R45 | **A pack told the user to run a shell command** | any pack's `manualHint` or `unavailableReason` contains `brew`, `apt-get`, `choco` or `pip install` as the only route to a capability |
+| R46 | A pack reported missing while its capability worked | the OCR pack reports `installed: false` on a build where `tesseract` is available and OCR conversions succeed |
+| R47 | Downloader could not merge streams | `GET /api/download` reports `canMerge: false` on a build that has FFmpeg, which silently caps every download at a single pre-merged stream |
 
 ---
 
@@ -550,7 +554,7 @@ Stated so the gaps are known rather than assumed:
 
 | Stage | Contents | Gate |
 |---|---|---|
-| **Fast** (< 2 min) | T1, T2, T3, T6, R01–R43 | Must pass before any commit |
+| **Fast** (< 2 min) | T1, T2, T3, T6, R01–R47 | Must pass before any commit |
 | **Standard** (< 15 min) | + T4, T7, T8, T9, T11 | Must pass before a merge |
 | **Full** (< 90 min) | + T5, all `[slow]`, T10 automatable | Must pass before a release, and after any engine-image change |
 | **Manual** | T10 `[manual]` | Before a release |
@@ -710,3 +714,23 @@ regression and is correct. FFmpeg genuinely cannot mux MPEG-1 video into Matrosk
 of the three "failures" in the first run of this test were the assertions being
 wrong rather than the code — worth recording, because a test that asserts the wrong
 codec is indistinguishable from a bug until you check what the tool itself will do.
+
+### R45 — a pack that could not install itself
+
+The OCR pack's install button did not install anything. It displayed a line
+telling the user to run `brew install tesseract tesseract-lang`.
+
+That was a reasonable engineering answer — Tesseract is a system binary with no
+portable macOS build — and a useless product answer. The whole point of packing
+this app for non-technical users is that they never open a terminal, and a pack
+whose install instruction is a shell command is not a pack, it is a note.
+
+The fix was to stop requiring Tesseract. RapidOCR is an ONNX model distributed on
+PyPI, so the pack installs the same way every other pip pack does. Tesseract is
+still preferred when present because it is better on dense text, and the converter
+chooses at runtime.
+
+That change introduced R46 immediately: the Docker image has Tesseract but not
+RapidOCR, so the pack began reporting itself missing while OCR worked perfectly.
+`Pack.satisfied_by` now expresses "this capability is already here by another
+route" — a pack describes a *capability*, not a particular implementation of one.

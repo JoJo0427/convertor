@@ -28,6 +28,7 @@ import importlib
 import importlib.util
 import platform
 from dataclasses import dataclass, field
+from typing import Callable
 
 from . import engines
 
@@ -105,6 +106,11 @@ class Pack:
     sources: tuple[Source, ...] = ()
     # Shown when there is no source: the manual route, in one line.
     manual_hint: str = ""
+    # True when this pack's capability is already present by some other route, so
+    # the pack itself is unnecessary. The OCR pack provides RapidOCR, but a build
+    # that has the Tesseract binary can already read scans — without this it would
+    # report the capability missing while the conversions worked fine.
+    satisfied_by: "Callable[[], bool] | None" = None
 
     @property
     def root(self):
@@ -131,6 +137,8 @@ class Pack:
     @property
     def installed(self) -> bool:
         """Present if everything it claims to provide is actually resolvable."""
+        if self.satisfied_by is not None and self.satisfied_by():
+            return True
         for engine_id in self.provides_engines:
             if not engines.available(engine_id):
                 return False
@@ -312,7 +320,8 @@ PACKS: tuple[Pack, ...] = (
         provides_modules=("rapidocr_onnxruntime",),
         requirements="requirements-pack-ocr.txt",
         sources=(Source(platform="any", kind="pip", megabytes=95,
-                        installed_megabytes=320),),
+                        installed_megabytes=284),),
+        satisfied_by=lambda: engines.available("tesseract"),
         manual_hint="Installing Tesseract yourself also works — it is used in "
                     "preference when present.",
     ),

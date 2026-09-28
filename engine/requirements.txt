@@ -32,3 +32,10 @@ anthropic==0.69.0
 # PDF structure recovery: tables, images and layout into DOCX/Markdown
 pdf2docx==0.5.13
 pymupdf4llm==1.28.2
+
+# Media downloader. Pure Python; uses the image's FFmpeg to merge streams.
+yt-dlp==2026.8.19
+
+# OCR fallback for builds without the Tesseract binary. The image has Tesseract,
+# so this is here only to keep the Docker and desktop capability sets identical.
+rapidocr-onnxruntime==1.4.4
