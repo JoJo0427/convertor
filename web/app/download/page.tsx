@@ -22,9 +22,52 @@ import type {
   Download,
   DownloadOverview,
   DownloadProbe,
+  DownloadQuality,
   EngineError,
 } from "@/lib/types";
-import { Bar, Button, ErrorBlock, Icons, Spinner, TextInput } from "@/components/ui";
+import {
+  Bar,
+  Button,
+  Check,
+  ErrorBlock,
+  Icons,
+  Spinner,
+  TextInput,
+} from "@/components/ui";
+
+/* The four choices, defined here rather than fetched.
+ *
+ * They were coming from the engine, which meant the entire "What to save" section
+ * was empty until a network round trip resolved — and stayed empty forever if it
+ * failed. A heading with nothing under it, no explanation. These are four fixed
+ * options that never change at runtime; the engine has no say in them, so asking
+ * it was pure risk for no benefit.
+ *
+ * The engine is still asked for the things only it knows: where files go by
+ * default, whether yt-dlp loaded, and whether FFmpeg is there to merge streams.
+ */
+const QUALITIES: DownloadQuality[] = [
+  {
+    id: "best",
+    label: "Best available",
+    detail: "Highest quality video and audio, merged into one file.",
+  },
+  {
+    id: "1080p",
+    label: "Up to 1080p",
+    detail: "Full HD. Smaller than the best available, still sharp.",
+  },
+  {
+    id: "720p",
+    label: "Up to 720p",
+    detail: "HD. A good balance of size and quality.",
+  },
+  {
+    id: "audio",
+    label: "Audio only",
+    detail: "Extracts the sound as an MP3. No video.",
+  },
+];
 
 function seconds(total: number | null): string {
   if (!total) return "";
@@ -204,7 +247,7 @@ export default function DownloadPage() {
       <section className="mt-5">
         <p className="t-label mb-2">What to save</p>
         <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-          {(overview?.qualities ?? []).map((option) => {
+          {QUALITIES.map((option) => {
             const selected = quality === option.id;
             return (
               <button
@@ -231,15 +274,17 @@ export default function DownloadPage() {
           </p>
         )}
 
-        <label className="mt-3 flex items-center gap-2 t-small text-[var(--ink-muted)]">
-          <input
-            type="checkbox"
+        {/* The app's own checkbox, not a raw one. Every other tick in Convertor
+            is a <Check>; a bare browser checkbox here looked like a different
+            program had drawn it. */}
+        <div className="mt-3">
+          <Check
             checked={subtitles}
-            onChange={(e) => setSubtitles(e.target.checked)}
-            disabled={running}
+            onChange={setSubtitles}
+            label="Also save subtitles"
+            help="English, when the site publishes them."
           />
-          Also save English subtitles when the site has them
-        </label>
+        </div>
       </section>
 
       {/* Where it lands, shown as a real path rather than hidden in a workspace. */}
@@ -250,10 +295,12 @@ export default function DownloadPage() {
           value={directory}
           onChange={setDirectory}
           disabled={running}
-          placeholder={overview?.defaultDirectory ?? ""}
+          placeholder={overview?.defaultDirectory ?? "…"}
         />
         <p className="mt-1 t-micro text-[var(--ink-faint)]">
-          The folder is created if it does not exist.
+          {overview
+            ? "The folder is created if it does not exist."
+            : "Finding the default folder…"}
         </p>
       </section>
 
