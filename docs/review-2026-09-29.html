@@ -1,0 +1,159 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Convertor — Review and Roadmap</title></head>
+<body>
+
+<h1>Convertor — Review and Roadmap</h1>
+<p class="sub">29 September 2026 · build 1.0.0 (aarch64) · reviewed by Claude and Codex independently</p>
+
+<h2>Summary</h2>
+<p>The app works. Conversion is broad and correct, the desktop packaging is real, and
+the pack system installs and removes cleanly. What follows is what is wrong with it,
+in the order it is worth fixing.</p>
+<p>Two reviews were run over the same commit. Codex read the engine statically and
+produced ten line-specific findings; Claude measured the running application and the
+rendered interface. They overlapped on almost nothing, which is the useful outcome:
+static reading found races and escape paths, measurement found cost and absent
+controls.</p>
+
+<table>
+<tr><th>Area</th><th>State</th></tr>
+<tr><td>Conversion engine</td><td>Broad and correct. 185 formats, 33 converters, FFmpeg capability-discovered.</td></tr>
+<tr><td>Desktop packaging</td><td>Works. 186 MB disk image, launches, converts, no orphan process.</td></tr>
+<tr><td>Engine packs</td><td>Install, verify and remove correctly from upstream sources.</td></tr>
+<tr><td>Downloader</td><td>Works, now reports real qualities and sizes. Least mature area.</td></tr>
+<tr><td>Job runner</td><td><b>Has a defect that strands jobs permanently.</b> See P0-1.</td></tr>
+<tr><td>Windows</td><td>Never built. CI is written and unverified.</td></tr>
+</table>
+
+<h2>P0 — Correctness, before any new feature</h2>
+
+<h3>P0-1 · A job can be stranded at "running" forever</h3>
+<p><b>engine/app/jobs.py:320</b> — verified empirically.</p>
+<p><code>_resolve_inputs()</code> and <code>require_route()</code> run at body line 9 of
+<code>_run_item</code>; its <code>try</code> begins at line 23. <code>guarded()</code> has no
+handler, and <code>_run</code> awaits with <code>asyncio.gather</code> and no outer handler.
+An exception from either call escapes every handler, <code>gather</code> re-raises, and the
+finalisation that marks the job finished never executes.</p>
+<p><b>Trigger:</b> delete an input file between creating a job and it starting. The item is
+already marked running, so the item and its job stay running for the life of the process.
+Nothing times out and nothing reports it.</p>
+<p><b>Fix:</b> move both calls inside the handler, and wrap <code>guarded()</code> so one
+item's failure cannot terminate the job.</p>
+
+<h3>P0-2 · Two installs of one pack corrupt each other</h3>
+<p><b>engine/app/installer.py:560</b> — found by Codex, static.</p>
+<p>The "is one already running" check and the insertion of the new install record sit in
+two separate critical sections. Two requests can both pass the check, both start threads,
+and both manipulate the same pack root and its <code>.replacing</code> sibling. One thread
+can delete the other's verified payload.</p>
+<p><b>Fix:</b> claim the pack id inside one lock, before any filesystem work.</p>
+
+<h3>P0-3 · A failed rename leaves the previous pack displaced</h3>
+<p><b>engine/app/installer.py:480</b> — found by Codex, static.</p>
+<p>An install moves the existing pack to <code>&lt;root&gt;.replacing</code> and then renames
+staging into place. If the second rename fails, the working pack is gone from its expected
+path and nothing restores it. The install reports failure; the user loses a pack that was
+fine.</p>
+<p><b>Fix:</b> restore the retired directory when the second rename fails.</p>
+
+<h3>P0-4 · A cancelled download can report success</h3>
+<p><b>engine/app/downloader.py:391</b> — found by Codex, static.</p>
+<p>Cancellation is only observed inside the progress hook. A cancel that arrives during
+post-processing, after the final hook, is never seen, and the worker records
+<code>completed</code>.</p>
+<p><b>Fix:</b> re-check the cancel flag immediately before recording completion.</p>
+
+<h2>P1 — Resource discipline</h2>
+
+<h3>P1-1 · Every status poll walks 25,000 files</h3>
+<p><b>engine/app/packs.py</b> — measured.</p>
+<table>
+<tr><th>Endpoint</th><th>Cost per call</th></tr>
+<tr><td>/api/formats</td><td>1 ms</td></tr>
+<tr><td>/api/files</td><td>1 ms</td></tr>
+<tr><td>/api/packs</td><td>183 ms</td></tr>
+<tr><td>/api/system</td><td>201 ms</td></tr>
+</table>
+<p><code>Pack.disk_megabytes</code> walks the entire pack tree to total its size, and
+<code>/api/system</code> includes it. With the office and pdfword packs installed that is
+<b>25,304 files walked on every call</b>, and the interface polls this endpoint. Checking
+installed-ness costs 0.4 ms; measuring size costs 184 ms.</p>
+<p><b>Fix:</b> compute size only for the packs screen, or cache it and invalidate on install
+and removal. The header does not need it at all.</p>
+
+<h3>P1-2 · Completed jobs and downloads are never released</h3>
+<p><b>jobs.py:179, downloader.py:173</b> — found by Codex, static.</p>
+<p>Both keep every record for the life of the process, with routes, items, warnings, output
+metadata and listener queues attached. <code>forget()</code> exists for jobs and is never
+called. A long desktop session grows without bound.</p>
+
+<h3>P1-3 · Concurrency is bounded per job, not globally</h3>
+<p><b>jobs.py:307</b> — found by Codex, static.</p>
+<p>Each job builds its own semaphore, so N jobs permit N × concurrency converters at once.
+Each job looks bounded; the machine is not.</p>
+
+<h2>P2 — Interface</h2>
+<p>Measured by rendering every page headlessly at 1280, 900 and 390 px with hostile
+content — a 105-character filename, unicode, an emoji. Findings were checked against
+screenshots, which is how the worst one was found.</p>
+<table>
+<tr><th>Finding</th><th>State</th></tr>
+<tr><td>Download screen rendered no quality buttons until a fetch resolved</td><td>Fixed</td></tr>
+<tr><td>Two-line control used a fixed-height single-row class; labels clipped</td><td>Fixed</td></tr>
+<tr><td>Fifth nav item clipped the wordmark at phone width</td><td>Fixed</td></tr>
+<tr><td>Conversion, formats, history, settings at three widths</td><td>No clipping or overlap</td></tr>
+<tr><td>Nav links are 24 px tall</td><td>Deliberate desktop density; small for touch</td></tr>
+</table>
+<p>The lesson worth keeping: a numeric layout probe reported the download screen clean while
+its entire control group was missing. Every check it ran inspected rendered elements, and the
+bug was elements that never rendered. A screenshot found it in ten seconds.</p>
+
+<h2>Roadmap</h2>
+<p>Deliberately short. The app's problem is not a shortage of features.</p>
+
+<h3>Now — finish what exists</h3>
+<ol>
+<li><b>The four P0 defects.</b> None is speculative; P0-1 is verified and permanent.</li>
+<li><b>P1-1, the status poll.</b> One afternoon, and it removes a constant disk cost.</li>
+<li><b>Run the Windows CI once.</b> It has never executed. Until it does, Windows support is a claim.</li>
+<li><b>A real end-to-end download test in CI.</b> The "reports success, downloads nothing"
+defect shipped because every test used a local file server.</li>
+</ol>
+
+<h3>Next — the two gaps a user actually meets</h3>
+<ol>
+<li><b>Signing and notarisation.</b> Unsigned means right-click-to-open on macOS and a
+SmartScreen panel on Windows. Acceptable for colleagues, not for the audience this is for.
+Roughly $99/year plus a Windows certificate.</li>
+<li><b>Resumable pack downloads.</b> A 298 MB LibreOffice pack restarts from zero on any
+interruption, which on a slow mirror is a real loss.</li>
+</ol>
+
+<h3>Worth doing, small</h3>
+<ol>
+<li><b>A download queue.</b> Several links, one after another. The engine already supports it;
+only the screen assumes one.</li>
+<li><b>Remember the last output folder</b> per screen, rather than defaulting every time.</li>
+<li><b>Show estimated size before conversion</b> for media, the way the downloader now does.
+The same surprise exists on the convert screen.</li>
+</ol>
+
+<h3>Explicitly not now</h3>
+<p>Cloud sync, accounts, a plugin system, mobile, batch scripting, a CLI. Each is defensible
+and none is the reason this app is not yet ready to hand to someone. Adding any of them
+before the P0 list is finished would be building on a job runner that can strand a job.</p>
+
+<h2>How this was reviewed</h2>
+<table>
+<tr><th>Method</th><th>What it found</th></tr>
+<tr><td>Codex, static engine read</td><td>10 findings: races, escape paths, unbounded state</td></tr>
+<tr><td>Claude, running measurement</td><td>Endpoint cost, 25,304-file walk, memory</td></tr>
+<tr><td>Headless render, 3 widths</td><td>3 layout defects, all fixed</td></tr>
+<tr><td>Screenshots</td><td>The absent control group the probe could not see</td></tr>
+<tr><td>Acceptance suite, 43 checks</td><td>Passing against the packaged app</td></tr>
+</table>
+<p>Codex's findings were not taken on trust: its highest-severity claim was reproduced
+independently before being written down here. The rest are marked with the confidence
+Codex itself stated.</p>
+
+</body></html>
