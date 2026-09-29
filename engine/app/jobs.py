@@ -177,6 +177,34 @@ class Job:
 
 
 _JOBS: dict[str, Job] = {}
+_WORKER_SEMAPHORE: asyncio.Semaphore | None = None
+_WORKER_SEMAPHORE_LIMIT: int | None = None
+_WORKER_SEMAPHORE_LOOP: asyncio.AbstractEventLoop | None = None
+_FINISHED_JOB_LIMIT = 50
+
+
+def _worker_semaphore() -> asyncio.Semaphore:
+    global _WORKER_SEMAPHORE
+    global _WORKER_SEMAPHORE_LIMIT
+    global _WORKER_SEMAPHORE_LOOP
+
+    limit = config.worker_concurrency()
+    loop = asyncio.get_running_loop()
+    if _WORKER_SEMAPHORE_LIMIT != limit or _WORKER_SEMAPHORE_LOOP is not loop:
+        _WORKER_SEMAPHORE = asyncio.Semaphore(limit)
+        _WORKER_SEMAPHORE_LIMIT = limit
+        _WORKER_SEMAPHORE_LOOP = loop
+    return _WORKER_SEMAPHORE
+
+
+def _prune_finished_jobs() -> None:
+    finished = sorted(
+        (job for job in _JOBS.values() if job.finished_at is not None),
+        key=lambda job: job.finished_at or 0.0,
+        reverse=True,
+    )
+    for job in finished[_FINISHED_JOB_LIMIT:]:
+        _JOBS.pop(job.id, None)
 
 
 def get(job_id: str) -> Job | None:
@@ -421,7 +449,7 @@ async def _run(job: Job) -> None:
     job.status = RUNNING
     job.emit()
 
-    semaphore = asyncio.Semaphore(config.worker_concurrency())
+    semaphore = _worker_semaphore()
 
     async def guarded(item: JobItem) -> None:
         async with semaphore:
@@ -475,6 +503,7 @@ async def _run(job: Job) -> None:
         job.status = COMPLETED
     job.finished_at = time.time()
     job.emit()
+    _prune_finished_jobs()
 
     await db.record_job({
         "id": job.id,

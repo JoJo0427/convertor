@@ -509,6 +509,9 @@ def _run(pack) -> None:
 
         engines.refresh()
         packs_module.activate_site_dirs()
+        # The measured size is cached, and this is the moment it stopped being
+        # true. Without this the packs screen would report the old size, or none.
+        packs_module.invalidate_size_cache(pack.id)
 
         # Only now is it honest to say "installed" — and only if it is true.
         #
@@ -665,10 +668,11 @@ def remove(pack) -> None:
         _forget_modules_under(root)
         shutil.rmtree(retired, ignore_errors=True)
 
-    from . import engines
+    from . import engines, packs as packs_module
 
     engines.refresh()
     importlib.invalidate_caches()
+    packs_module.invalidate_size_cache(pack.id)
     with _lock:
         _installs.pop(pack.id, None)
 

@@ -33,6 +33,17 @@ from typing import Callable
 from . import engines
 
 
+_SIZE_CACHE: dict[str, int] = {}
+
+
+def invalidate_size_cache(pack_id: str | None = None) -> None:
+    """Discard measurements after installed pack contents change."""
+    if pack_id is None:
+        _SIZE_CACHE.clear()
+    else:
+        _SIZE_CACHE.pop(pack_id, None)
+
+
 # Platform keys. "any" means the artefact is platform-independent (a pip install).
 def platform_key() -> str:
     system = platform.system().lower()
@@ -167,6 +178,9 @@ class Pack:
         root = self.root
         if not root.is_dir():
             return 0
+        cached = _SIZE_CACHE.get(self.id)
+        if cached is not None:
+            return cached
         total = 0
         for path in root.rglob("*"):
             try:
@@ -174,7 +188,9 @@ class Pack:
                     total += path.stat().st_size
             except OSError:
                 continue
-        return round(total / 1_000_000)
+        measured = round(total / 1_000_000)
+        _SIZE_CACHE[self.id] = measured
+        return measured
 
     def to_dict(self) -> dict:
         from . import installer

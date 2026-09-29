@@ -35,40 +35,6 @@ import {
   TextInput,
 } from "@/components/ui";
 
-/* The four choices, defined here rather than fetched.
- *
- * They were coming from the engine, which meant the entire "What to save" section
- * was empty until a network round trip resolved — and stayed empty forever if it
- * failed. A heading with nothing under it, no explanation. These are four fixed
- * options that never change at runtime; the engine has no say in them, so asking
- * it was pure risk for no benefit.
- *
- * The engine is still asked for the things only it knows: where files go by
- * default, whether yt-dlp loaded, and whether FFmpeg is there to merge streams.
- */
-const QUALITIES: DownloadQuality[] = [
-  {
-    id: "best",
-    label: "Best available",
-    detail: "Highest quality video and audio, merged into one file.",
-  },
-  {
-    id: "1080p",
-    label: "Up to 1080p",
-    detail: "Full HD. Smaller than the best available, still sharp.",
-  },
-  {
-    id: "720p",
-    label: "Up to 720p",
-    detail: "HD. A good balance of size and quality.",
-  },
-  {
-    id: "audio",
-    label: "Audio only",
-    detail: "Extracts the sound as an MP3. No video.",
-  },
-];
-
 function seconds(total: number | null): string {
   if (!total) return "";
   const m = Math.floor(total / 60);
@@ -222,6 +188,13 @@ export default function DownloadPage() {
             onKeyDown={(e) => {
               if (e.key === "Enter") (found ? begin() : check());
             }}
+            // Checking on blur, so the qualities are the video's own by the time
+            // anyone looks for them. The button stays because a link pasted and
+            // left focused has never blurred, and because a check that failed
+            // needs a way to be retried.
+            onBlur={() => {
+              if (url.trim() && !found && !probing && !running) check();
+            }}
             disabled={running || !!unavailable}
             className="min-w-0 flex-1 rounded-none border border-[var(--line)] bg-[var(--surface)] px-3 py-2.5 text-[15px] text-[var(--ink)] outline-none placeholder:text-[var(--ink-faint)] focus:border-[var(--select)]"
           />
@@ -271,7 +244,7 @@ export default function DownloadPage() {
           ) : null}
         </p>
         <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-4">
-          {(found?.formats?.length ? found.formats : QUALITIES).map((option) => {
+          {(found?.formats ?? []).map((option) => {
             const selected = quality === option.id;
             return (
               <button
@@ -299,6 +272,30 @@ export default function DownloadPage() {
             );
           })}
         </div>
+
+        {/* The section never sits empty and silent. There is no invented menu to
+            fall back on any more — the qualities are the video's own or there are
+            none yet — so the waiting and failed states say so out loud. A heading
+            with nothing under it is the defect this page already shipped once. */}
+        {!found?.formats?.length && (
+          <div className="border border-dashed border-[var(--line)] px-3 py-4 text-center">
+            {probing ? (
+              <span className="flex items-center justify-center gap-2 t-small text-[var(--ink-muted)]">
+                <Spinner /> Reading what this link offers…
+              </span>
+            ) : error ? (
+              <span className="t-small text-[var(--ink-muted)]">
+                The link could not be read, so there are no qualities to choose
+                from yet.
+              </span>
+            ) : (
+              <span className="t-small text-[var(--ink-muted)]">
+                Paste a link above. The qualities this video actually offers, and
+                what each one weighs, appear here.
+              </span>
+            )}
+          </div>
+        )}
 
         {overview && !overview.canMerge && (
           <p className="mt-2 t-micro text-[var(--warn)]">
@@ -341,7 +338,12 @@ export default function DownloadPage() {
         <Button
           variant="primary"
           onClick={begin}
-          disabled={!url.trim() || running || !!unavailable}
+          disabled={!url.trim() || running || !!unavailable || !found?.formats?.length}
+          title={
+            found?.formats?.length
+              ? undefined
+              : "Check the link first to see what it offers"
+          }
         >
           {running ? "Downloading…" : "Download"}
         </Button>

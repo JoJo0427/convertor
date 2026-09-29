@@ -191,6 +191,23 @@ def recent(limit: int = 20) -> list[dict]:
         return [d.to_dict() for d in items[:limit]]
 
 
+# How many finished downloads to remember. They are kept only so the screen can
+# show what just happened; without a bound a long session grows for ever.
+_FINISHED_LIMIT = 50
+
+
+def _prune_finished() -> None:
+    with _lock:
+        finished = sorted(
+            (d for d in _downloads.values() if d.status != "running"),
+            key=lambda d: d.finished or d.started,
+            reverse=True,
+        )
+        for item in finished[_FINISHED_LIMIT:]:
+            _downloads.pop(item.id, None)
+            _cancelled.discard(item.id)
+
+
 def _set(download_id: str, **fields) -> None:
     with _lock:
         item = _downloads.get(download_id)
@@ -485,10 +502,21 @@ def _run(item: Download, quality: str, directory: Path, subtitles: bool) -> None
                     "If it is age-restricted or private, it cannot be fetched.",
                 ],
             )
+        # The last word on cancellation, checked here and not only in the hook.
+        #
+        # yt-dlp calls the progress hook while bytes are moving. A cancel that
+        # arrives during post-processing — merging streams, extracting audio —
+        # may never see another hook, so the worker would reach this line and
+        # record success for something the user had already stopped.
+        if item.id in _cancelled:
+            raise _Cancelled()
+
         _set(item.id, status="completed", phase="Finished", progress=1.0,
              title=title or item.title, files=final, finished=time.time())
+        _prune_finished()
     except _Cancelled:
         _set(item.id, status="cancelled", phase="Cancelled", finished=time.time())
+        _prune_finished()
     except Exception as error:  # noqa: BLE001 - reported, never swallowed
         # yt-dlp catches what a progress hook raises and re-raises its own type,
         # so a cancel can arrive here wearing the wrong coat. Reporting it as a
@@ -503,6 +531,7 @@ def _run(item: Download, quality: str, directory: Path, subtitles: bool) -> None
         )
         _set(item.id, status="failed", phase="Failed", finished=time.time(),
              error=readable.to_dict())
+        _prune_finished()
     finally:
         _cancelled.discard(item.id)
 
