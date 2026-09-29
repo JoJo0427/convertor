@@ -201,6 +201,11 @@ def probe(url: str) -> dict:
     }
 
 
+def _looks_like_playlist(url: str) -> bool:
+    low = url.lower()
+    return "list=" in low or "/playlist" in low
+
+
 def _ffmpeg_dir() -> str | None:
     """The directory holding the FFmpeg yt-dlp should use for merging.
 
@@ -263,11 +268,38 @@ def _readable_error(url: str, error: Exception) -> ConversionError:
 # ------------------------------------------------------------------- downloading
 
 
+class _Collector:
+    """Keeps yt-dlp's own error text so a failure has something to report.
+
+    yt-dlp logs and continues rather than raising for most download failures, so
+    without this the reason is written to a logger nobody reads and the caller is
+    left with an exception that never came.
+    """
+
+    def __init__(self) -> None:
+        self.errors: list[str] = []
+
+    def debug(self, message: str) -> None:
+        pass
+
+    def info(self, message: str) -> None:
+        pass
+
+    def warning(self, message: str) -> None:
+        pass
+
+    def error(self, message: str) -> None:
+        text = str(message).strip()
+        if text:
+            self.errors.append(text)
+
+
 def _run(item: Download, quality: str, directory: Path, subtitles: bool) -> None:
     import yt_dlp
 
     preset = QUALITY_PRESETS.get(quality, QUALITY_PRESETS["best"])
     produced: list[str] = []
+    collector = _Collector()
 
     def hook(status: dict) -> None:
         if item.id in _cancelled:
@@ -308,8 +340,12 @@ def _run(item: Download, quality: str, directory: Path, subtitles: bool) -> None
         "no_warnings": True,
         "noprogress": True,
         "ffmpeg_location": _ffmpeg_dir(),
-        # Without this a single failed entry aborts an entire playlist.
-        "ignoreerrors": "only_download",
+        # Only for a playlist, where one bad entry should not abort the rest. For
+        # a single video it turns a failure into a silent no-op: yt-dlp swallows
+        # the error, returns normally, and the caller has no way to tell a
+        # finished download from one that never started.
+        "ignoreerrors": "only_download" if _looks_like_playlist(item.url) else False,
+        "logger": collector,
         "retries": 3,
     }
     if preset.get("audio_only"):
@@ -339,7 +375,29 @@ def _run(item: Download, quality: str, directory: Path, subtitles: bool) -> None
         # output.
         appeared = {p for p in directory.iterdir() if p.is_file()} - existing
         appeared |= {Path(p) for p in produced if Path(p).exists()}
-        final = sorted(str(p) for p in appeared if not p.name.startswith("."))
+        final = sorted(str(p) for p in appeared
+                       if not p.name.startswith(".")
+                       and not p.name.endswith((".part", ".ytdl")))
+
+        # Producing nothing is a failure, whatever yt-dlp returned.
+        #
+        # This is the defect this whole function exists to avoid: a download that
+        # reported "Finished" three seconds after it started, with no file
+        # anywhere, and no error. Success was inferred from "no exception was
+        # raised", which for yt-dlp means almost nothing.
+        if not final:
+            raise ConversionError(
+                code="nothing_downloaded",
+                title="Nothing was downloaded",
+                detail=(collector.errors[-1][:300] if collector.errors else
+                        "The download finished without producing a file and the "
+                        "downloader gave no reason."),
+                suggestions=[
+                    "Try again — the site may have been refusing requests.",
+                    "Check the link opens and plays in a browser.",
+                    "If it is age-restricted or private, it cannot be fetched.",
+                ],
+            )
         _set(item.id, status="completed", phase="Finished", progress=1.0,
              title=title or item.title, files=final, finished=time.time())
     except _Cancelled:
@@ -352,7 +410,10 @@ def _run(item: Download, quality: str, directory: Path, subtitles: bool) -> None
             _set(item.id, status="cancelled", phase="Cancelled",
                  finished=time.time())
             return
-        readable = _readable_error(item.url, error)
+        readable = _readable_error(
+            item.url,
+            Exception(collector.errors[-1]) if collector.errors else error,
+        )
         _set(item.id, status="failed", phase="Failed", finished=time.time(),
              error=readable.to_dict())
     finally:

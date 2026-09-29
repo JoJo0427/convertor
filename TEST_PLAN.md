@@ -510,6 +510,8 @@ recurrence is unmistakable. These run on every change.
 | R53 | **A pack installed and its route stayed dead** | with a capability cached by `lru_cache`, install the pack: `engines.refresh()` runs, the pack reports installed, and the route is still unavailable until the process restarts |
 | R54 | **A whole control group rendered as nothing** | load the download screen with the engine unreachable: the "What to save" heading must still be followed by its four choices |
 | R55 | A two-line control used a single-row class | any `.tile` whose content is more than one line, or a label whose `scrollWidth` exceeds its box |
+| R56 | **A download reported success having produced nothing** | start a download whose URL resolves but yields no media: it must end `failed` with a reason, never `completed` with an empty `files` |
+| R57 | yt-dlp's error text was discarded | a failed download's detail is generic where yt-dlp logged a specific cause |
 
 ---
 
@@ -562,7 +564,7 @@ Stated so the gaps are known rather than assumed:
 
 | Stage | Contents | Gate |
 |---|---|---|
-| **Fast** (< 2 min) | T1, T2, T3, T6, R01–R55 | Must pass before any commit |
+| **Fast** (< 2 min) | T1, T2, T3, T6, R01–R57 | Must pass before any commit |
 | **Standard** (< 15 min) | + T4, T7, T8, T9, T11 | Must pass before a merge |
 | **Full** (< 90 min) | + T5, all `[slow]`, T10 automatable | Must pass before a release, and after any engine-image change |
 | **Manual** | T10 `[manual]` | Before a release |
@@ -821,3 +823,35 @@ Two lessons, and the second is the expensive one:
    render.** An assertion suite and a look at the thing are not substitutes for
    each other. R55 — a two-line control using a fixed-height single-row class —
    *was* caught by measurement, because that bug produced something to measure.
+
+### R56 — "no exception was raised" is not success
+
+A user downloaded an hour-long video. It finished in three seconds, said
+**Finished**, and produced no file.
+
+Two decisions combined to make that possible:
+
+1. `ignoreerrors: "only_download"` was passed for every download. It exists so one
+   bad entry does not abort a playlist. For a single video it converts a failure
+   into a silent no-op — yt-dlp logs the reason, returns normally, and the caller
+   cannot tell a finished download from one that never started.
+2. The worker then marked the job `completed` unconditionally. Success was
+   inferred from the absence of an exception, which after (1) means almost
+   nothing.
+
+The fix is two lines of principle. **Producing nothing is a failure, whatever the
+library returned** — the run now checks that a file actually appeared and raises
+if not. And `ignoreerrors` is set only for a URL that looks like a playlist, where
+it is the behaviour actually wanted.
+
+`.part` and `.ytdl` files are excluded from what counts as produced, so an
+interrupted transfer cannot masquerade as a result.
+
+R57 came with it: yt-dlp writes failures to a logger rather than raising, so the
+reason was going nowhere. A collecting logger keeps the last error and it becomes
+the `detail` of the reported failure, instead of a generic sentence.
+
+**Verified in all three directions**, because a check that only fires one way is
+not a check: a real download still reports `completed` with its file; a URL that
+yields nothing reports `failed`; an unreachable host reports `failed` carrying
+yt-dlp's own words.
