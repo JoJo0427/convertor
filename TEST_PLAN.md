@@ -508,6 +508,8 @@ recurrence is unmistakable. These run on every change.
 | R51 | Cancelling a download was reported as a failure | cancelling mid-download ends with `status: failed` instead of `cancelled` |
 | R52 | Searchable PDF sized in pixels instead of points | OCR of a 4000px image produces a PDF page far larger than the paper it represents |
 | R53 | **A pack installed and its route stayed dead** | with a capability cached by `lru_cache`, install the pack: `engines.refresh()` runs, the pack reports installed, and the route is still unavailable until the process restarts |
+| R54 | **A whole control group rendered as nothing** | load the download screen with the engine unreachable: the "What to save" heading must still be followed by its four choices |
+| R55 | A two-line control used a single-row class | any `.tile` whose content is more than one line, or a label whose `scrollWidth` exceeds its box |
 
 ---
 
@@ -560,7 +562,7 @@ Stated so the gaps are known rather than assumed:
 
 | Stage | Contents | Gate |
 |---|---|---|
-| **Fast** (< 2 min) | T1, T2, T3, T6, R01–R53 | Must pass before any commit |
+| **Fast** (< 2 min) | T1, T2, T3, T6, R01–R55 | Must pass before any commit |
 | **Standard** (< 15 min) | + T4, T7, T8, T9, T11 | Must pass before a merge |
 | **Full** (< 90 min) | + T5, all `[slow]`, T10 automatable | Must pass before a release, and after any engine-image change |
 | **Manual** | T10 `[manual]` | Before a release |
@@ -792,3 +794,30 @@ The general rule this earns: **anything that caches an answer to "can this insta
 do X" has to be invalidated where X can change.** Both of these were written in
 this same session, which is how recent a decision has to be before it is worth
 re-checking.
+
+### R54 — the layout probe that could not see an empty screen
+
+A headless probe measured every page for clipped text, overlapping boxes and
+overflow, and reported the download screen clean. It was not clean. The four
+quality buttons were **absent**: they came from `GET /api/download`, so until that
+resolved — and forever if it failed — "What to save" was a heading with nothing
+under it, and "Save to" was an empty box.
+
+The probe reported zero findings because there was nothing on screen to clash.
+Every check it ran was a check on rendered elements, and the bug was elements that
+never rendered. It took a screenshot to see it, and the screenshot took ten
+seconds.
+
+The options are four fixed strings that never change at runtime. The engine had no
+say in them, so fetching them bought nothing and risked exactly this. They are
+defined client-side now and always render; the engine is asked only for what it
+alone knows — the default folder, whether yt-dlp loaded, whether FFmpeg can merge.
+
+Two lessons, and the second is the expensive one:
+
+1. **Never make a control's existence depend on a network round trip** when the
+   control's content is a constant.
+2. **A measurement that only inspects what rendered cannot tell you what failed to
+   render.** An assertion suite and a look at the thing are not substitutes for
+   each other. R55 — a two-line control using a fixed-height single-row class —
+   *was* caught by measurement, because that bug produced something to measure.
