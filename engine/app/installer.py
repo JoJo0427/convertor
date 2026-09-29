@@ -101,8 +101,9 @@ def _set(pack_id: str, **fields) -> None:
 
 
 def _check_cancelled(pack_id: str) -> None:
-    if pack_id in _cancelled:
-        raise _Cancelled()
+    with _lock:
+        if pack_id in _cancelled:
+            raise _Cancelled()
 
 
 class _Cancelled(Exception):
@@ -401,9 +402,11 @@ def _install_pip(pack_id: str, pack, staging: Path) -> None:
         # pip's own progress is the only honest progress available here.
         if line.startswith(("Collecting", "Downloading", "Installing", "Building")):
             _set(pack_id, phase=line[:120])
-        if pack_id in _cancelled:
+        try:
+            _check_cancelled(pack_id)
+        except _Cancelled:
             process.kill()
-            raise _Cancelled()
+            raise
     if process.wait() != 0:
         from .errors import tool_failed
 
@@ -485,7 +488,17 @@ def _run(pack) -> None:
         else:
             retired = None
         root.parent.mkdir(parents=True, exist_ok=True)
-        staging.rename(root)
+        try:
+            staging.rename(root)
+        except Exception:
+            if retired is not None:
+                try:
+                    retired.rename(root)
+                except Exception:
+                    # The failure that displaced the working pack is still the
+                    # useful error to report, even if recovery also fails.
+                    pass
+            raise
         staging = None  # type: ignore[assignment]
         if retired is not None:
             shutil.rmtree(retired, ignore_errors=True)
@@ -548,7 +561,8 @@ def _run(pack) -> None:
                                  "your PATH."],
              })
     finally:
-        _cancelled.discard(pack.id)
+        with _lock:
+            _cancelled.discard(pack.id)
         if staging is not None:
             shutil.rmtree(staging, ignore_errors=True)
 
@@ -557,43 +571,49 @@ def start(pack) -> dict:
     """Begin installing a pack. Returns its initial state."""
     from . import packs as packs_module
 
+    install = Install(pack_id=pack.id)
     with _lock:
         existing = _installs.get(pack.id)
         if existing and existing.status == "running":
             return existing.to_dict()
+        _installs[pack.id] = install
+        _cancelled.discard(pack.id)
 
-    if pack.installed:
-        raise ConversionError(
-            code="pack_already_installed",
-            title=f"{pack.label} is already installed",
-            detail="Nothing to download.",
-            suggestions=[],
-        )
-    source = pack.source()
-    if source is None:
-        raise ConversionError(
-            code="pack_unavailable",
-            title=f"{pack.label} cannot be installed automatically",
-            detail=packs_module._unavailable_reason(pack, None),
-            suggestions=[pack.manual_hint] if pack.manual_hint else [],
-        )
-    if config.BUILD_KIND != "desktop":
-        raise ConversionError(
-            code="pack_not_manageable",
-            title="Packs are part of the image in this build",
-            detail="Under Docker every pack ships in the image, and a download "
-                   "into the container would be lost when it is recreated.",
-            suggestions=["Use the desktop app to manage packs individually."],
-        )
+    try:
+        if pack.installed:
+            raise ConversionError(
+                code="pack_already_installed",
+                title=f"{pack.label} is already installed",
+                detail="Nothing to download.",
+                suggestions=[],
+            )
+        source = pack.source()
+        if source is None:
+            raise ConversionError(
+                code="pack_unavailable",
+                title=f"{pack.label} cannot be installed automatically",
+                detail=packs_module._unavailable_reason(pack, None),
+                suggestions=[pack.manual_hint] if pack.manual_hint else [],
+            )
+        if config.BUILD_KIND != "desktop":
+            raise ConversionError(
+                code="pack_not_manageable",
+                title="Packs are part of the image in this build",
+                detail="Under Docker every pack ships in the image, and a download "
+                       "into the container would be lost when it is recreated.",
+                suggestions=["Use the desktop app to manage packs individually."],
+            )
 
-    config.PACKS_DIR.mkdir(parents=True, exist_ok=True)
-    with _lock:
-        _installs[pack.id] = Install(pack_id=pack.id)
-    _cancelled.discard(pack.id)
-
-    thread = threading.Thread(target=_run, args=(pack,), daemon=True,
-                              name=f"pack-install-{pack.id}")
-    thread.start()
+        config.PACKS_DIR.mkdir(parents=True, exist_ok=True)
+        thread = threading.Thread(target=_run, args=(pack,), daemon=True,
+                                  name=f"pack-install-{pack.id}")
+        thread.start()
+    except Exception:
+        with _lock:
+            if _installs.get(pack.id) is install:
+                _installs.pop(pack.id)
+            _cancelled.discard(pack.id)
+        raise
     return state_for(pack.id) or {}
 
 
@@ -603,8 +623,8 @@ def cancel(pack_id: str) -> dict | None:
         install = _installs.get(pack_id)
         if install is None or install.status != "running":
             return install.to_dict() if install else None
-    _cancelled.add(pack_id)
-    return state_for(pack_id)
+        _cancelled.add(pack_id)
+        return install.to_dict()
 
 
 def _forget_modules_under(root: Path) -> int:

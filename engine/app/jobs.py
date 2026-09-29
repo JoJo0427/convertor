@@ -317,13 +317,6 @@ async def _run_item(job: Job, item: JobItem) -> None:
     item.message = "Starting"
     job.emit()
 
-    inputs = await _resolve_inputs(item.input_ids)
-    source = inputs[0].format_id
-    route = (
-        job.route if job.mode == "combined"
-        else registry.require_route(source, job.target, cardinality=job.cardinality)
-    )
-
     def progress(fraction: float, message: str) -> None:
         if job.cancelling:
             raise JobCancelled()
@@ -332,6 +325,22 @@ async def _run_item(job: Job, item: JobItem) -> None:
         job.emit()
 
     try:
+        # Resolving the inputs and picking the route live inside the handler.
+        #
+        # They used to run above it. Both can raise — an input deleted between
+        # creating the job and running it, or a route that no longer exists — and
+        # the item had already been marked running by then. The exception escaped
+        # every handler here, escaped `guarded`, and made the `gather` in `_run`
+        # re-raise, so the code that finalises the job never ran. The item and its
+        # job stayed "running" for the life of the process, with nothing to time
+        # them out and nothing reporting why.
+        inputs = await _resolve_inputs(item.input_ids)
+        source = inputs[0].format_id
+        route = (
+            job.route if job.mode == "combined"
+            else registry.require_route(source, job.target, cardinality=job.cardinality)
+        )
+
         current_inputs = inputs
         step_count = len(route.steps)
         for step_index, step in enumerate(route.steps):
@@ -422,7 +431,30 @@ async def _run(job: Job) -> None:
                     item.message = "Cancelled"
                     job.emit()
                 return
-            await _run_item(job, item)
+            try:
+                await _run_item(job, item)
+            except Exception as exc:  # noqa: BLE001 - one item must not end the job
+                # A second line of defence behind _run_item's own handler. Whatever
+                # gets past it stops here, because `gather` below re-raises the
+                # first exception it sees and would abandon every other item in the
+                # batch along with the job's own finalisation.
+                item.status = FAILED
+                item.finished_at = time.time()
+                item.message = "This file could not be converted"
+                item.error = {
+                    "code": "unexpected",
+                    "title": "This file could not be converted",
+                    "detail": (
+                        f"An unexpected problem occurred while processing "
+                        f"{item.label}: {type(exc).__name__}: {str(exc)[:300]}"
+                    ),
+                    "suggestions": [
+                        "Try a different output format or preset.",
+                        "If the file opens correctly elsewhere, re-export it and "
+                        "try again.",
+                    ],
+                }
+                job.emit()
 
     pending = [i for i in job.items if i.status == QUEUED]
     if job.mode == "combined":
