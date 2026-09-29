@@ -512,6 +512,7 @@ recurrence is unmistakable. These run on every change.
 | R55 | A two-line control used a single-row class | any `.tile` whose content is more than one line, or a label whose `scrollWidth` exceeds its box |
 | R56 | **A download reported success having produced nothing** | start a download whose URL resolves but yields no media: it must end `failed` with a reason, never `completed` with an empty `files` |
 | R57 | yt-dlp's error text was discarded | a failed download's detail is generic where yt-dlp logged a specific cause |
+| R58 | HTML → PDF emits ligatures that break text search | search the produced PDF for a word containing "fi", "fl" or "ffi" — it must be findable, not stored as U+FB01 |
 
 ---
 
@@ -564,7 +565,7 @@ Stated so the gaps are known rather than assumed:
 
 | Stage | Contents | Gate |
 |---|---|---|
-| **Fast** (< 2 min) | T1, T2, T3, T6, R01–R57 | Must pass before any commit |
+| **Fast** (< 2 min) | T1, T2, T3, T6, R01–R58 | Must pass before any commit |
 | **Standard** (< 15 min) | + T4, T7, T8, T9, T11 | Must pass before a merge |
 | **Full** (< 90 min) | + T5, all `[slow]`, T10 automatable | Must pass before a release, and after any engine-image change |
 | **Manual** | T10 `[manual]` | Before a release |
@@ -855,3 +856,18 @@ the `detail` of the reported failure, instead of a generic sentence.
 not a check: a real download still reports `completed` with its file; a URL that
 yields nothing reports `failed`; an unreachable host reports `failed` carrying
 yt-dlp's own words.
+
+### R58 — a PDF that reads correctly and cannot be searched
+
+The PyMuPDF renderer substitutes typographic ligatures, so "fixed" is stored as
+"ﬁxed" (U+FB01). The page looks right and copy-paste and Ctrl-F both fail on any
+word containing fi, fl or ffi.
+
+Found by accident: an assertion checking the generated report contained the word
+"fixed" failed against a PDF where it plainly appeared. The assertion was right and
+the renderer was wrong, which is the opposite of the usual case and the reason it is
+worth writing down.
+
+Low severity — the document is readable and printable — but a report nobody can
+search is diminished, and the fix is a renderer font option rather than anything
+structural.

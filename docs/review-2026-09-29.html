@@ -27,7 +27,7 @@ controls.</p>
 
 <h2>P0 — Correctness, before any new feature</h2>
 
-<h3>P0-1 · A job can be stranded at "running" forever</h3>
+<h3>P0-1 · A job can be stranded at "running" forever <em>— fixed</em></h3>
 <p><b>engine/app/jobs.py:320</b> — verified empirically.</p>
 <p><code>_resolve_inputs()</code> and <code>require_route()</code> run at body line 9 of
 <code>_run_item</code>; its <code>try</code> begins at line 23. <code>guarded()</code> has no
@@ -37,24 +37,28 @@ finalisation that marks the job finished never executes.</p>
 <p><b>Trigger:</b> delete an input file between creating a job and it starting. The item is
 already marked running, so the item and its job stay running for the life of the process.
 Nothing times out and nothing reports it.</p>
-<p><b>Fix:</b> move both calls inside the handler, and wrap <code>guarded()</code> so one
-item's failure cannot terminate the job.</p>
+<p><b>Fixed.</b> Both calls moved inside the handler and <code>guarded()</code> now catches,
+so one item's failure cannot end the batch. An item whose input is gone fails with
+"One of the files is no longer available" instead of stranding its job.</p>
 
-<h3>P0-2 · Two installs of one pack corrupt each other</h3>
+<h3>P0-2 · Two installs of one pack corrupt each other <em>— fixed</em></h3>
 <p><b>engine/app/installer.py:560</b> — found by Codex, static.</p>
 <p>The "is one already running" check and the insertion of the new install record sit in
 two separate critical sections. Two requests can both pass the check, both start threads,
 and both manipulate the same pack root and its <code>.replacing</code> sibling. One thread
 can delete the other's verified payload.</p>
-<p><b>Fix:</b> claim the pack id inside one lock, before any filesystem work.</p>
+<p><b>Fixed.</b> The id is claimed inside one critical section before any validation or
+filesystem work, and released if validation then fails. Race-tested with ten concurrent
+installs of one pack: exactly one worker thread, clean completion, no leaked state.</p>
 
-<h3>P0-3 · A failed rename leaves the previous pack displaced</h3>
+<h3>P0-3 · A failed rename leaves the previous pack displaced <em>— fixed</em></h3>
 <p><b>engine/app/installer.py:480</b> — found by Codex, static.</p>
 <p>An install moves the existing pack to <code>&lt;root&gt;.replacing</code> and then renames
 staging into place. If the second rename fails, the working pack is gone from its expected
 path and nothing restores it. The install reports failure; the user loses a pack that was
 fine.</p>
-<p><b>Fix:</b> restore the retired directory when the second rename fails.</p>
+<p><b>Fixed.</b> The retired directory is put back before the error is re-raised, and only
+deleted once the replacement is in place.</p>
 
 <h3>P0-4 · A cancelled download can report success</h3>
 <p><b>engine/app/downloader.py:391</b> — found by Codex, static.</p>
@@ -113,21 +117,41 @@ bug was elements that never rendered. A screenshot found it in ten seconds.</p>
 
 <h3>Now — finish what exists</h3>
 <ol>
-<li><b>The four P0 defects.</b> None is speculative; P0-1 is verified and permanent.</li>
+<li><b>P0-4, the last open defect.</b> A cancelled download can still report success.
+P0-1, P0-2 and P0-3 are fixed and verified.</li>
 <li><b>P1-1, the status poll.</b> One afternoon, and it removes a constant disk cost.</li>
 <li><b>Run the Windows CI once.</b> It has never executed. Until it does, Windows support is a claim.</li>
 <li><b>A real end-to-end download test in CI.</b> The "reports success, downloads nothing"
 defect shipped because every test used a local file server.</li>
 </ol>
 
-<h3>Next — the two gaps a user actually meets</h3>
+<h3>Next</h3>
 <ol>
-<li><b>Signing and notarisation.</b> Unsigned means right-click-to-open on macOS and a
-SmartScreen panel on Windows. Acceptable for colleagues, not for the audience this is for.
-Roughly $99/year plus a Windows certificate.</li>
 <li><b>Resumable pack downloads.</b> A 298 MB LibreOffice pack restarts from zero on any
 interruption, which on a slow mirror is a real loss.</li>
+<li><b>Prune completed jobs and downloads</b> (P1-2), and cap concurrency globally (P1-3).</li>
 </ol>
+
+<h3>Signing — declined, and what replaces it</h3>
+<p>Apple charges $99 a year for the certificate that would silence Gatekeeper. For a free
+project distributed on GitHub that is a bad trade, so it is not happening. There is no free
+path to notarisation: a free Apple developer account cannot notarise, and ad-hoc signing does
+not satisfy Gatekeeper.</p>
+<p>What signing would have bought splits into two things, and one of them is free:</p>
+<table>
+<tr><th>What signing gives</th><th>Free substitute</th></tr>
+<tr><td>Proof the file is unaltered</td><td>A SHA-256 published beside every artefact</td></tr>
+<tr><td>Proof of who built it</td><td>GitHub build provenance — cryptographic proof the binary
+came from this repository and commit, verifiable with <code>gh attestation verify</code></td></tr>
+<tr><td>No warning on first launch</td><td><b>Nothing. This one cannot be bought for free.</b></td></tr>
+</table>
+<p>So the release notes state the warning plainly rather than pretending it away. On macOS 15
+and later — this machine runs 26 — right-click → Open no longer works; the app must be allowed
+from <b>System Settings → Privacy &amp; Security → Open Anyway</b>. Windows shows SmartScreen
+until the download builds reputation, which it may never do at low volume.</p>
+<p>All of this is now in the CI workflow: a release job that only fires when every platform
+built, checksums for each artefact, build provenance attestation, and install instructions in
+the release body.</p>
 
 <h3>Worth doing, small</h3>
 <ol>
