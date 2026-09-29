@@ -144,9 +144,94 @@ jobs:
           npm ci
           npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
+      # A checksum for every artefact. This is the part of code signing that
+      # actually matters for a project handed out on GitHub: not "Apple vouches
+      # for this developer", but "the file you downloaded is the file that was
+      # built". It costs nothing.
+      - name: Checksum the artefacts
+        shell: bash
+        run: |
+          cd desktop/src-tauri/target/${{ matrix.target }}/release/bundle
+          for f in dmg/*.dmg msi/*.msi; do
+            [ -f "$f" ] || continue
+            if command -v shasum >/dev/null; then shasum -a 256 "$f" > "$f.sha256";
+            else certutil -hashfile "$f" SHA256 > "$f.sha256"; fi
+            cat "$f.sha256"
+          done
+
       - uses: actions/upload-artifact@v4
         with:
           name: convertor-${{ matrix.target }}
           path: |
             desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.sha256
             desktop/src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.sha256
+
+  # Publishing is a separate job so a release is only cut when every platform
+  # built. A half-published release is worse than none.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # Both are needed for build provenance, and both are free on a public repo.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Collect the artefacts
+        run: |
+          mkdir -p out
+          find dist -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.sha256' \) \
+            -exec cp {} out/ \;
+          ls -la out
+
+      # Cryptographic proof that these files were built by this workflow from
+      # this commit. It is not a substitute for Apple notarisation — Gatekeeper
+      # does not read it — but it is the verifiable-origin guarantee that signing
+      # would otherwise provide, and it is free. Anyone can check it with:
+      #   gh attestation verify <file> --repo <owner>/<repo>
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'out/*.dmg, out/*.msi'
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true
+          body: |
+            ## Installing
+
+            These builds are **not signed** — this is a free project and Apple
+            charges $99/year for the certificate that would silence the warning.
+            Everything below is the free equivalent: you can verify exactly what
+            you downloaded, you just have to tell your OS you meant it.
+
+            **macOS.** Open the `.dmg`, drag Convertor to Applications, then launch
+            it once from **System Settings → Privacy & Security → Open Anyway**.
+            On macOS 15 and later that panel replaced the old right-click → Open.
+            Apple silicon takes the `aarch64` build, Intel the `x86_64` one.
+
+            **Windows.** Run the `.msi`. SmartScreen will interrupt: choose
+            **More info → Run anyway**.
+
+            ## Verifying what you downloaded
+
+            Each file ships with a `.sha256`. Compare it:
+
+            ```
+            shasum -a 256 -c Convertor_1.0.0_aarch64.dmg.sha256
+            ```
+
+            Every build also carries GitHub build provenance, which proves it came
+            from this repository and this commit:
+
+            ```
+            gh attestation verify Convertor_1.0.0_aarch64.dmg --repo ${{ github.repository }}
+            ```
