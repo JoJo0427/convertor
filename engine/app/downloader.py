@@ -60,6 +60,72 @@ QUALITY_PRESETS: dict[str, dict] = {
 }
 
 
+def _estimate_bytes(fmt: dict, duration: float) -> int:
+    """Roughly how large a stream will be.
+
+    YouTube reports no filesize for its DASH streams, so the honest options are a
+    bitrate estimate or nothing at all. Nothing at all is what let "Best available"
+    quietly mean 8.8 GB, so an estimate it is — and the interface says "about".
+    """
+    for key in ("filesize", "filesize_approx"):
+        if fmt.get(key):
+            return int(fmt[key])
+    tbr = fmt.get("tbr") or 0
+    if tbr and duration:
+        return int(tbr * 1000 / 8 * duration)
+    return 0
+
+
+def _real_formats(info: dict) -> list[dict]:
+    """The qualities this particular video actually offers.
+
+    Built from the video's own stream list rather than a fixed menu, because a
+    fixed menu is a guess: it offers 1080p for something published at 480p, and
+    hides the 1440p and 2160p that exist. Each entry carries an estimated size,
+    which is the number that decides whether someone wants it.
+    """
+    streams = info.get("formats") or []
+    duration = float(info.get("duration") or 0)
+
+    audio_streams = [
+        f for f in streams
+        if f.get("vcodec") in (None, "none") and f.get("acodec") not in (None, "none")
+    ]
+    best_audio = max(audio_streams, key=lambda f: f.get("abr") or 0, default=None)
+    audio_bytes = _estimate_bytes(best_audio, duration) if best_audio else 0
+
+    # One entry per resolution, keeping the highest-bitrate stream at each.
+    by_height: dict[int, dict] = {}
+    for f in streams:
+        height = f.get("height")
+        if not height or f.get("vcodec") in (None, "none"):
+            continue
+        current = by_height.get(height)
+        if current is None or (f.get("tbr") or 0) > (current.get("tbr") or 0):
+            by_height[height] = f
+
+    out: list[dict] = []
+    for height, f in sorted(by_height.items(), reverse=True):
+        total = _estimate_bytes(f, duration) + audio_bytes
+        fps = f.get("fps")
+        note = f"{int(fps)} fps" if fps else ""
+        out.append({
+            "id": f"h{height}",
+            "label": f"{height}p",
+            "detail": note,
+            "megabytes": round(total / 1_000_000) if total else 0,
+        })
+
+    if best_audio:
+        out.append({
+            "id": "audio",
+            "label": "Audio only",
+            "detail": "Saved as MP3",
+            "megabytes": round(audio_bytes / 1_000_000) if audio_bytes else 0,
+        })
+    return out
+
+
 def available() -> bool:
     import importlib.util
 
@@ -198,7 +264,28 @@ def probe(url: str) -> dict:
         "thumbnail": info.get("thumbnail"),
         "uploader": info.get("uploader") or "",
         "extension": info.get("ext") or "",
+        # What this video really offers, replacing the fixed menu once known.
+        "formats": _real_formats(info),
     }
+
+
+def _selector_for(quality: str) -> dict:
+    """Turn the chosen quality into a yt-dlp format selector.
+
+    A height arrives as "h1080". The selector is built here and never accepted
+    from the caller: a raw yt-dlp format string is a small language, and letting
+    the interface send one would make every future field of it part of this API.
+    """
+    if quality in QUALITY_PRESETS:
+        return QUALITY_PRESETS[quality]
+    if quality.startswith("h") and quality[1:].isdigit():
+        height = int(quality[1:])
+        return {
+            "label": f"{height}p",
+            "format": (f"bestvideo[height<={height}]+bestaudio/"
+                       f"best[height<={height}]/best"),
+        }
+    return QUALITY_PRESETS["best"]
 
 
 def _looks_like_playlist(url: str) -> bool:
@@ -297,7 +384,7 @@ class _Collector:
 def _run(item: Download, quality: str, directory: Path, subtitles: bool) -> None:
     import yt_dlp
 
-    preset = QUALITY_PRESETS.get(quality, QUALITY_PRESETS["best"])
+    preset = _selector_for(quality)
     produced: list[str] = []
     collector = _Collector()
 

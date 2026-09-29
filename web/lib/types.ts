@@ -380,6 +380,8 @@ export interface DownloadQuality {
   id: string;
   label: string;
   detail: string;
+  /** Estimated size once checked. 0 when the site does not say enough to guess. */
+  megabytes?: number;
 }
 
 export interface DownloadProbe {
@@ -390,6 +392,8 @@ export interface DownloadProbe {
   thumbnail: string | null;
   uploader: string;
   extension?: string;
+  /** The qualities this particular video offers, with estimated sizes. */
+  formats?: DownloadQuality[];
 }
 
 export interface Download {

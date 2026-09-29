@@ -123,7 +123,24 @@ export default function DownloadPage() {
     setError(null);
     setFound(null);
     try {
-      setFound(await api.probeDownload(url.trim()));
+      const info = await api.probeDownload(url.trim());
+      setFound(info);
+      // Once the link is known, the fixed menu is replaced by what this video
+      // actually offers — the real resolutions, each with its estimated size.
+      if (info.formats?.length) {
+        const ids = info.formats.map((f) => f.id);
+        if (!ids.includes(quality)) {
+          // Default to the best option at or below 1080p rather than the largest
+          // available: "best" on an hour of 4K is several gigabytes, and picking
+          // that for someone without asking is not a default, it is a surprise.
+          const sensible =
+            info.formats.find((f) => {
+              const h = Number(f.id.replace("h", ""));
+              return Number.isFinite(h) && h <= 1080;
+            }) ?? info.formats[0];
+          setQuality(sensible.id);
+        }
+      }
     } catch (e) {
       if (e instanceof ApiError) setError(e.info);
     } finally {
@@ -245,9 +262,16 @@ export default function DownloadPage() {
       {/* What to fetch. Four choices, not a format matrix: the decision people
           actually make here is "video or just the sound, and how big". */}
       <section className="mt-5">
-        <p className="t-label mb-2">What to save</p>
-        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-          {QUALITIES.map((option) => {
+        <p className="t-label mb-2">
+          What to save
+          {found?.formats?.length ? (
+            <span className="ml-2 font-normal text-[var(--ink-faint)]">
+              what this video offers · sizes are estimates
+            </span>
+          ) : null}
+        </p>
+        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-4">
+          {(found?.formats?.length ? found.formats : QUALITIES).map((option) => {
             const selected = quality === option.id;
             return (
               <button
@@ -258,7 +282,16 @@ export default function DownloadPage() {
                 disabled={running}
                 className="choice"
               >
-                <span className="t-small t-strong">{option.label}</span>
+                <span className="flex w-full items-baseline justify-between gap-2">
+                  <span className="t-small t-strong">{option.label}</span>
+                  {option.megabytes ? (
+                    <span className="num t-micro text-[var(--ink-faint)]">
+                      ~{option.megabytes >= 1000
+                        ? `${(option.megabytes / 1000).toFixed(1)} GB`
+                        : `${option.megabytes} MB`}
+                    </span>
+                  ) : null}
+                </span>
                 <span className="t-micro text-[var(--ink-faint)]">
                   {option.detail}
                 </span>
