@@ -6,6 +6,8 @@ import type { EngineError, InputFile, Job, Plan, PlanDetails } from "@/lib/types
 import { Queue } from "@/components/Queue";
 import { Conversion, type Mode } from "@/components/Conversion";
 import { Inspector } from "@/components/Inspector";
+import { ErrorBlock } from "@/components/ui";
+import { canStartConversion } from "@/lib/conversion-state";
 
 export default function WorkspacePage() {
   const [files, setFiles] = useState<InputFile[]>([]);
@@ -18,17 +20,31 @@ export default function WorkspacePage() {
   const [target, setTarget] = useState<string | null>(null);
   const [details, setDetails] = useState<PlanDetails | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsKey, setDetailsKey] = useState<string | null>(null);
+  const [detailsContext, setDetailsContext] = useState<string | null>(null);
   const [options, setOptions] = useState<Record<string, unknown>>({});
   const [preset, setPreset] = useState<string | null>(null);
+  const [presetRevision, setPresetRevision] = useState(0);
 
   const [job, setJob] = useState<Job | null>(null);
+  const [jobFiles, setJobFiles] = useState<InputFile[]>([]);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<EngineError | null>(null);
 
   const stopWatching = useRef<(() => void) | null>(null);
   const addRef = useRef<HTMLInputElement | null>(null);
+  const submitting = useRef(false);
   const fileIds = files.map((file) => file.id);
   const fileKey = fileIds.join(",");
+  const requestKey = JSON.stringify([fileKey, target, mode, options]);
+  const contextKey = JSON.stringify([fileKey, target, mode]);
+  const running = job?.status === "queued" || job?.status === "running";
+  const busy = starting || running;
+  const canConvert = canStartConversion({
+    target, fileCount: files.length, busy: busy || uploading,
+    hasJob: job !== null, details,
+    planIsCurrent: !detailsLoading && detailsKey === requestKey,
+  });
 
   const fail = (thrown: unknown) => {
     if (thrown instanceof ApiError) setError(thrown.info);
@@ -47,10 +63,11 @@ export default function WorkspacePage() {
     api
       .listFiles()
       .then((data) => setFiles(data.files))
-      .catch(() => undefined);
+      .catch(fail);
   }, []);
 
   const addFiles = useCallback(async (incoming: File[]) => {
+    if (busy) return;
     setUploading(true);
     setError(null);
     try {
@@ -62,9 +79,10 @@ export default function WorkspacePage() {
     } finally {
       setUploading(false);
     }
-  }, []);
+  }, [busy]);
 
   const addPasted = useCallback(async (text: string, name: string) => {
+    if (busy) return;
     setUploading(true);
     try {
       const result = await api.paste(text, name);
@@ -74,7 +92,7 @@ export default function WorkspacePage() {
     } finally {
       setUploading(false);
     }
-  }, []);
+  }, [busy]);
 
   const removeFile = useCallback(async (id: string) => {
     setFiles((current) => current.filter((file) => file.id !== id));
@@ -92,13 +110,14 @@ export default function WorkspacePage() {
   }, [files]);
 
   const moveFile = useCallback((from: number, to: number) => {
+    if (busy) return;
     setFiles((current) => {
       const next = [...current];
       const [moved] = next.splice(from, 1);
       next.splice(to, 0, moved);
       return next;
     });
-  }, []);
+  }, [busy]);
 
   /* ---------------------------------------------------------------- plan */
 
@@ -136,6 +155,7 @@ export default function WorkspacePage() {
   useEffect(() => {
     if (!target || !fileIds.length) {
       setDetails(null);
+      setDetailsLoading(false);
       return;
     }
     let cancelled = false;
@@ -146,7 +166,8 @@ export default function WorkspacePage() {
         .then((data) => {
           if (cancelled) return;
           setDetails(data);
-          setOptions((current) => ({ ...data.defaults, ...current }));
+          setDetailsKey(requestKey);
+          setDetailsContext(contextKey);
         })
         .catch((thrown) => {
           if (cancelled) return;
@@ -160,7 +181,7 @@ export default function WorkspacePage() {
       clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target, mode, fileKey, JSON.stringify(options)]);
+  }, [requestKey, presetRevision]);
 
   const chooseTarget = (formatId: string) => {
     setTarget(formatId);
@@ -187,9 +208,9 @@ export default function WorkspacePage() {
         description: "",
         sourceFormat: plan?.sources[0] ?? null,
         targetFormat: target,
-        values: options,
+        values: { ...details?.defaults, ...options },
       });
-      setDetails(await api.planDetails(fileIds, target, mode, options));
+      setPresetRevision((current) => current + 1);
     } catch (thrown) {
       fail(thrown);
     }
@@ -198,7 +219,7 @@ export default function WorkspacePage() {
   const deletePreset = async (id: string) => {
     try {
       await api.deletePreset(id);
-      if (target) setDetails(await api.planDetails(fileIds, target, mode, options));
+      setPresetRevision((current) => current + 1);
     } catch (thrown) {
       fail(thrown);
     }
@@ -215,18 +236,21 @@ export default function WorkspacePage() {
   useEffect(() => () => stopWatching.current?.(), []);
 
   const convert = useCallback(async () => {
-    if (!target || starting) return;
+    if (!target || !canConvert || submitting.current) return;
+    submitting.current = true;
     setStarting(true);
     setError(null);
     try {
-      attach(await api.createJob({ fileIds, target, mode, options, preset }));
+      setJobFiles(files);
+      attach(await api.createJob({ fileIds, target, mode, options: { ...details?.defaults, ...options }, preset }));
     } catch (thrown) {
       fail(thrown);
     } finally {
+      submitting.current = false;
       setStarting(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target, starting, fileKey, mode, JSON.stringify(options), preset, attach]);
+  }, [target, canConvert, fileKey, mode, JSON.stringify(options), preset, attach, details, files]);
 
   const cancel = async () => {
     if (!job) return;
@@ -258,13 +282,13 @@ export default function WorkspacePage() {
       if (meta && event.key === "Enter") {
         event.preventDefault();
         convert();
-      } else if (meta && event.key.toLowerCase() === "o") {
+      } else if (!busy && meta && event.key.toLowerCase() === "o") {
         event.preventDefault();
         addRef.current?.click();
-      } else if (meta && event.key === "Backspace" && selectedId) {
+      } else if (!busy && !typing && meta && event.key === "Backspace" && selectedId) {
         event.preventDefault();
         removeFile(selectedId);
-      } else if (!typing && !meta && ["1", "2", "3"].includes(event.key)) {
+      } else if (!busy && !typing && !meta && ["1", "2", "3"].includes(event.key)) {
         const next = (["each", "combined", "split"] as Mode[])[Number(event.key) - 1];
         if (next === "combined" && !plan?.canCombine) return;
         if (next === "split" && !plan?.canSplit) return;
@@ -283,10 +307,10 @@ export default function WorkspacePage() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [convert, selectedId, removeFile, files, plan]);
+  }, [convert, selectedId, removeFile, files, plan, busy]);
 
   return (
-    <div className="workspace grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)] xl:grid-cols-[320px_minmax(0,1fr)_340px]">
+    <div className={`workspace ${files.length === 0 && !job ? "workspace-empty" : ""}`}>
       <input
         ref={addRef}
         type="file"
@@ -299,42 +323,47 @@ export default function WorkspacePage() {
         }}
       />
 
-      <Queue
-        files={files}
-        loading={uploading}
-        ordered={mode === "combined"}
-        selectedId={selectedId}
-        onSelect={setSelectedId}
-        onAdd={addFiles}
-        onPaste={addPasted}
-        onRemove={removeFile}
-        onMove={moveFile}
-        onClear={clearFiles}
-      />
+      <fieldset className="workspace-editor" disabled={busy}>
+        <legend className="sr-only">Conversion inputs and settings</legend>
+        <Queue
+          files={files}
+          loading={uploading}
+          ordered={mode === "combined"}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          onAdd={addFiles}
+          onPaste={addPasted}
+          onRemove={removeFile}
+          onMove={moveFile}
+          onClear={clearFiles}
+        />
 
-      <Conversion
-        plan={plan}
-        mode={mode}
-        onModeChange={(next) => {
-          setMode(next);
-          setJob(null);
-        }}
-        target={target}
-        onTargetChange={chooseTarget}
-        details={details}
-        options={options}
-        onOptionChange={changeOption}
-        preset={preset}
-        onPresetChange={applyPreset}
-        onSavePreset={savePreset}
-        onDeletePreset={deletePreset}
-        fileCount={files.length}
-      />
+        {files.length > 0 && <Conversion
+          plan={plan}
+          mode={mode}
+          onModeChange={(next) => {
+            setMode(next);
+            setJob(null);
+          }}
+          target={target}
+          onTargetChange={chooseTarget}
+          details={detailsContext === contextKey ? details : null}
+          options={{ ...details?.defaults, ...options }}
+          onOptionChange={changeOption}
+          preset={preset}
+          onPresetChange={applyPreset}
+          onSavePreset={savePreset}
+          onDeletePreset={deletePreset}
+          fileCount={files.length}
+        />}
+      </fieldset>
 
-      <div className="hidden h-full min-h-0 xl:block">
+      {(files.length > 0 || job) ? (
         <Inspector
+          canConvert={canConvert}
+          inputFiles={jobFiles}
           details={details}
-          detailsLoading={detailsLoading}
+          detailsLoading={detailsLoading || (details !== null && detailsKey !== requestKey)}
           target={target}
           fileCount={files.length}
           job={job}
@@ -346,7 +375,9 @@ export default function WorkspacePage() {
           onReset={() => setJob(null)}
           onDismissError={() => setError(null)}
         />
-      </div>
+      ) : error && (
+        <div className="welcome-error"><ErrorBlock error={error} onDismiss={() => setError(null)} /></div>
+      )}
     </div>
   );
 }

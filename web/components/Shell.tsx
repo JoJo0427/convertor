@@ -9,7 +9,7 @@ import { Icons, Kbd, Spinner } from "./ui";
 
 const NAV = [
   { href: "/", label: "Convert" },
-  { href: "/download", label: "Download" },
+  { href: "/download", label: "Media downloader" },
   { href: "/formats", label: "Formats" },
   { href: "/history", label: "History" },
   { href: "/privacy", label: "Privacy" },
@@ -257,7 +257,7 @@ export function Shell({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-dvh flex-col">
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50

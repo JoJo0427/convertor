@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { bytes, describeMetadata } from "@/lib/format";
 import type { InputFile, Preview } from "@/lib/types";
-import { Button, Empty, Fmt, Icons, Kbd, Spinner } from "./ui";
+import { Button, Fmt, Icons, Kbd, Spinner } from "./ui";
 
 function PreviewBlock({ preview }: { preview: Preview }) {
   if (preview.kind === "text" && preview.text) {
@@ -251,7 +251,7 @@ export function Queue({
   return (
     <section
       aria-label="Input queue"
-      className="pane relative"
+      className={`pane relative input-pane ${files.length === 0 ? "input-pane-empty" : ""}`}
       onDragEnter={(event) => {
         if (!event.dataTransfer.types.includes("Files")) return;
         event.preventDefault();
@@ -268,7 +268,7 @@ export function Queue({
       onDrop={handleDrop}
     >
       <header className="pane-head">
-        <h2 className="t-label">Queue</h2>
+        <h2 className="t-label">{files.length === 0 ? "Convert files" : "Input files"}</h2>
         {files.length > 0 && (
           <span className="num t-micro text-[var(--ink-faint)]">
             {files.length}
@@ -295,6 +295,13 @@ export function Queue({
         </div>
       </header>
 
+      {files.length === 0 && (
+        <div className="welcome-copy">
+          <h1 className="t-display">What would you like to convert?</h1>
+          <p>Add documents, images, spreadsheets, media or archives.
+            Choose an output, review the plan, then convert.</p>
+        </div>
+      )}
       <button
         onClick={() => inputRef.current?.click()}
         className="add-target"
@@ -302,7 +309,7 @@ export function Queue({
       >
         <Icons.add className="h-4 w-4" />
         <span className="text-[13px] font-[600]">Add files</span>
-        <span className="t-micro text-[var(--ink-faint)]">
+        <span className="t-small text-[var(--ink-muted)]">
           or drop them here · <Kbd>⌘O</Kbd>
         </span>
       </button>
@@ -322,6 +329,7 @@ export function Queue({
       {pasting && (
         <div className="rule bg-[var(--sunken)] p-2">
           <textarea
+            aria-label="Text to convert"
             autoFocus
             value={pasteText}
             onChange={(event) => setPasteText(event.target.value)}
@@ -356,11 +364,9 @@ export function Queue({
       )}
 
       <div className="pane-body">
-        {files.length === 0 && !loading ? (
-          <Empty
-            title="Nothing queued"
-            detail="Documents, images, spreadsheets, media, archives — read on this machine, never uploaded."
-          />
+        {files.length === 0 ? (
+          <p className="welcome-note">Standard conversions run on your conversion engine.
+            Any workflow that sends content to an AI service is identified before you run it.</p>
         ) : (
           <>
             {ordered && files.length > 1 && (

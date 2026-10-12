@@ -50,23 +50,25 @@ function FormatTile({
     <button
       onClick={onSelect}
       aria-pressed={selected}
-      className="tile"
-      style={blocked ? { opacity: 0.55 } : undefined}
+      className="choice format-choice"
       title={why}
     >
-      <span className="flex-1 truncate text-[13px] font-[600]">{item.label}</span>
+      <span className="flex w-full items-center gap-2">
+        <span className="flex-1 text-[13px] font-[600]">{item.label}</span>
+        <Fmt>{item.formatId}</Fmt>
+        {selected && <Icons.check className="h-3 w-3 shrink-0" />}
+      </span>
+      <span className="t-small text-[var(--ink-muted)]">{item.summary || item.reason}</span>
       {!item.route.direct && (
-        <span className="num t-micro shrink-0 text-[var(--ink-faint)]">
-          {item.route.steps.length} steps
+        <span className="t-small text-[var(--ink-muted)]">
+          {item.route.description}
         </span>
       )}
       {blocked && (
-        <span className="num t-micro shrink-0" style={{ color: "var(--warn)" }}>
-          {pack ? `+${pack.megabytes} MB` : "!"}
+        <span className="t-small" style={{ color: "var(--warn)" }}>
+          {pack ? `Needs ${pack.label} · ${pack.megabytes} MB download` : `Needs ${item.route.missingEngines.join(", ")}`}
         </span>
       )}
-      <Fmt>{item.formatId}</Fmt>
-      {selected && <Icons.check className="h-3 w-3 shrink-0" />}
     </button>
   );
 }
@@ -139,7 +141,7 @@ function FormatBrowser({
                       onSelect(item.formatId);
                       onClose();
                     }}
-                    className="row row-hover w-full text-left"
+                    className="row row-hover w-full items-start py-2 text-left"
                     style={
                       target === item.formatId
                         ? { background: "var(--select-wash)" }
@@ -147,9 +149,12 @@ function FormatBrowser({
                     }
                   >
                     <Fmt>{item.formatId}</Fmt>
-                    <span className="w-36 shrink-0 truncate t-small t-strong">{item.label}</span>
-                    <span className="flex-1 truncate t-micro text-[var(--ink-faint)]">
-                      {item.route.direct ? item.summary : item.route.description}
+                    <span className="flex-1">
+                      <span className="block t-small t-strong">{item.label}</span>
+                      <span className="block t-small text-[var(--ink-muted)]">{item.summary}</span>
+                      {!item.route.available && <span className="block t-small text-[var(--warn)]">
+                        Needs {item.route.missingPacks?.map((pack) => pack.label).join(", ") || item.route.missingEngines.join(", ")}
+                      </span>}
                     </span>
                     {!item.route.direct && (
                       <span className="num t-micro shrink-0 text-[var(--ink-faint)]">
@@ -268,6 +273,8 @@ export function Conversion({
         : plan?.recommendations ?? [];
   const featured = list.filter((item) => item.featured);
   const shown = (featured.length ? featured : list).slice(0, 12);
+  const selected = list.find((item) => item.formatId === target);
+  if (selected && !shown.includes(selected)) shown.push(selected);
 
   const visible = (details?.options ?? []).filter(
     (option) =>
@@ -296,7 +303,7 @@ export function Conversion({
   return (
     <section aria-label="Conversion" className="pane">
       <header className="pane-head">
-        <h2 className="t-label">Conversion</h2>
+        <h2 className="t-label">Output</h2>
         <div className="ml-auto">
           <Segmented<Mode>
             ariaLabel="Conversion shape"
@@ -332,7 +339,7 @@ export function Conversion({
             </h3>
             {list.length > 0 && (
               <span className="num t-small text-[var(--ink-faint)]">
-                {list.length} available
+                {list.length} format{list.length === 1 ? "" : "s"}
               </span>
             )}
             {list.length > shown.length && (
@@ -344,7 +351,14 @@ export function Conversion({
               </button>
             )}
           </div>
-          {shown.length === 0 ? (
+          {featured.length > 0 && list.length > 1 && mode === "each" && (
+            <p className="mb-3 t-small text-[var(--ink-muted)]">
+              Common outputs for these files appear first. Available converters and fewer conversion steps rank higher.
+            </p>
+          )}
+          {!plan ? (
+            <p role="status" className="py-4 t-small text-[var(--ink-muted)]">Checking output formats…</p>
+          ) : shown.length === 0 ? (
             <Empty
               title={
                 mode === "combined"

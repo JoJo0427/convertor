@@ -1,9 +1,11 @@
 "use client";
 
-import { api } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { api, engineUrl } from "@/lib/api";
 import { isDesktop, reveal } from "@/lib/desktop";
 import { bytes, duration } from "@/lib/format";
-import type { EngineError, Job, JobItem, PlanDetails } from "@/lib/types";
+import type { EngineError, InputFile, Job, JobItem, OutputFile, PlanDetails } from "@/lib/types";
+import { OutputPreview } from "./OutputPreview";
 import {
   Bar,
   Button,
@@ -19,11 +21,23 @@ import {
 } from "./ui";
 
 const RUNNING = new Set(["queued", "running"]);
+const BROWSER_IMAGES = new Set(["png", "jpeg", "jpg", "webp", "avif", "gif", "bmp", "svg", "ico"]);
 
 /** One compact row per batch item — a queue, not a stack of cards. */
-function ResultRow({ item }: { item: JobItem }) {
+function ResultRow({ item, inputFiles }: { item: JobItem; inputFiles: InputFile[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const [comparing, setComparing] = useState(false);
+  const [preview, setPreview] = useState<OutputFile | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const sources = item.inputIds.map((id) => inputFiles.find((file) => file.id === id));
+  const inputBytes = sources.length > 0 && sources.every(Boolean)
+    ? sources.reduce((sum, file) => sum + file!.size, 0) : null;
+  const outputBytes = item.outputs.reduce((sum, output) => sum + output.size, 0);
+  const source = sources.length === 1 ? sources[0] : undefined;
+  const output = item.outputs.length === 1 ? item.outputs[0] : undefined;
+  const canCompare = source && output && BROWSER_IMAGES.has(source.formatId ?? "") &&
+    BROWSER_IMAGES.has(output.formatId);
   const warnings = item.warnings.filter((notice) => notice.level === "warning");
-  const expandable = warnings.length > 0 || item.error || item.outputs.length > 1;
 
   return (
     <li className="border-b border-[var(--line)]">
@@ -50,42 +64,80 @@ function ResultRow({ item }: { item: JobItem }) {
 
       {item.status === "running" && <Bar value={item.progress} status="running" />}
 
+      {item.outputs.length > 0 && inputBytes !== null && (
+        <p className="num px-3 pb-1 t-small text-[var(--ink-muted)]">
+          Input {bytes(inputBytes)} → Output {bytes(outputBytes)}
+          {inputBytes > 0 && ` · ${Math.round(Math.abs(outputBytes - inputBytes) / inputBytes * 100)}% ${outputBytes <= inputBytes ? "smaller" : "larger"}`}
+        </p>
+      )}
       {item.outputs.length > 0 && (
-        <ul className="pb-1">
-          {item.outputs.slice(0, 3).map((output) => (
+        <ul id={`outputs-${item.id}`} className="pb-1">
+          {(expanded ? item.outputs : item.outputs.slice(0, 3)).map((output) => (
             <li key={output.path} className="flex items-center gap-1.5 px-3 py-[1px] pl-[22px]">
-              <a
+              {isDesktop() ? (
+                <button className="mono flex-1 truncate text-left hover:underline" title={output.name}
+                  onClick={async () => {
+                    if (output.previewable) setPreview(output);
+                    else if (!(await reveal(output.path))) setFileError(`Could not show ${output.name}. Saved at ${output.path}`);
+                  }}>{output.name}</button>
+              ) : <a
                 href={api.outputUrl(output.path, true)}
                 className="mono flex-1 truncate hover:underline"
                 title={output.name}
               >
                 {output.name}
-              </a>
+              </a>}
               <span className="num t-micro shrink-0 text-[var(--ink-faint)]">
                 {bytes(output.size)}
               </span>
               {output.previewable && (
-                <a
-                  href={api.outputUrl(output.path)}
-                  target="_blank"
-                  rel="noreferrer"
+                <button
+                  onClick={() => setPreview(output)}
                   aria-label={`Preview ${output.name}`}
                   className="shrink-0 text-[var(--ink-faint)] hover:text-[var(--ink)]"
                 >
                   <Icons.eye className="h-3 w-3" />
-                </a>
+                </button>
               )}
             </li>
           ))}
-          {item.outputs.length > 3 && (
-            <li className="num px-3 py-[1px] pl-[22px] t-micro text-[var(--ink-faint)]">
-              and {item.outputs.length - 3} more
-            </li>
-          )}
         </ul>
       )}
+      {fileError && <p role="alert" className="px-3 py-2 t-small text-[var(--fail)]">{fileError}</p>}
+      {preview && <OutputPreview output={preview} onClose={() => setPreview(null)} />}
+      {item.outputs.length > 3 && (
+        <button className="btn btn-quiet btn-sm mx-3 mb-2" aria-expanded={expanded}
+          aria-controls={`outputs-${item.id}`} onClick={() => setExpanded(!expanded)}>
+          {expanded ? "Show fewer files" : `Show all ${item.outputs.length} files`}
+        </button>
+      )}
+      {canCompare && (
+        <div className="px-3 pb-2">
+          <button className="btn btn-default btn-sm" aria-expanded={comparing}
+            aria-controls={`comparison-${item.id}`} onClick={() => setComparing(!comparing)}>
+            {comparing ? "Hide comparison" : "Compare images"}
+          </button>
+          {comparing && (
+            <div id={`comparison-${item.id}`} className="mt-2">
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { label: "Original", name: source.name, url: engineUrl(`/api/files/${source.id}/raw`) },
+                  { label: "Converted", name: output.name, url: api.outputUrl(output.path) },
+                ].map((image) => (
+                  <figure key={image.label}>
+                    <figcaption className="mb-1 t-small t-strong">{image.label}</figcaption>
+                    {/* Native images preserve the local engine URL in desktop builds. */}
+                    <img src={image.url} alt={`${image.label}: ${image.name}`} className="comparison-image" />
+                  </figure>
+                ))}
+              </div>
+              <p className="mt-1 t-small text-[var(--ink-muted)]">Scaled previews. Open the output preview to inspect it at full size.</p>
+            </div>
+          )}
+        </div>
+      )}
 
-      {expandable && (warnings.length > 0 || item.error) && (
+      {(warnings.length > 0 || item.error) && (
         <div className="px-3 pb-1.5 pl-[22px]">
           {warnings.map((notice, index) => (
             <p key={index} className="t-micro">
@@ -105,6 +157,8 @@ function ResultRow({ item }: { item: JobItem }) {
 }
 
 export function Inspector({
+  canConvert,
+  inputFiles,
   details,
   detailsLoading,
   target,
@@ -118,6 +172,8 @@ export function Inspector({
   onReset,
   onDismissError,
 }: {
+  canConvert: boolean;
+  inputFiles: InputFile[];
   details: PlanDetails | null;
   detailsLoading: boolean;
   target: string | null;
@@ -131,17 +187,27 @@ export function Inspector({
   onReset: () => void;
   onDismissError: () => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const running = job !== null && RUNNING.has(job.status);
+  useEffect(() => {
+    if (error || (job && !RUNNING.has(job.status))) setExpanded(true);
+  }, [error, job?.status]);
+  useEffect(() => {
+    if (!detailsLoading && details && (
+      details.warnings.length > 0 || details.compatibility.some((entry) => !entry.compatible)
+    )) setExpanded(true);
+  }, [details, detailsLoading]);
   const incompatible = (details?.compatibility ?? []).filter((entry) => !entry.compatible);
   const blocking = (details?.warnings ?? []).filter((notice) => notice.level === "error");
-  const canConvert =
-    !starting && !detailsLoading && details !== null && blocking.length === 0 &&
-    incompatible.length < fileCount;
 
   return (
-    <aside aria-label="Inspector" className="pane h-full">
+    <aside aria-label="Inspector" className={`pane inspector ${expanded ? "inspector-expanded" : ""}`}>
       <header className="pane-head">
         <h2 className="t-label">{job ? "Result" : "Plan"}</h2>
+        <button className="btn btn-quiet btn-sm inspector-toggle" aria-expanded={expanded}
+          aria-controls="conversion-inspector-body" onClick={() => setExpanded(!expanded)}>
+          {expanded ? "Hide details" : job ? "Show results" : "Review plan"}
+        </button>
         {job && (
           <Status
             status={job.status}
@@ -157,7 +223,7 @@ export function Inspector({
         )}
       </header>
 
-      <div className="pane-body">
+      <div id="conversion-inspector-body" className="pane-body inspector-body">
         {error && (
           <div className="rule">
             <ErrorBlock error={error} onDismiss={onDismissError} />
@@ -305,7 +371,7 @@ export function Inspector({
               </p>
               <ul>
                 {job.items.map((item) => (
-                  <ResultRow key={item.id} item={item} />
+                  <ResultRow key={item.id} item={item} inputFiles={inputFiles} />
                 ))}
               </ul>
             </div>
@@ -315,6 +381,12 @@ export function Inspector({
 
       {/* The action bar is pinned: the primary action never scrolls away. */}
       <footer className="flex-none border-t border-[var(--line)] p-2">
+        {!job && target && !detailsLoading && details && (
+          <p className="mb-2 t-small text-[var(--ink-muted)]">
+            {details.outputEstimate.description}
+            {details.warnings.some((notice) => notice.level === "warning") && " · Review conversion warnings above"}
+          </p>
+        )}
         {running ? (
           <>
             <Bar value={job!.progress} status="running" />
@@ -369,6 +441,8 @@ export function Inspector({
               {starting ? "Starting" : "Convert"}
               {target && canConvert && <Kbd>⌘↵</Kbd>}
             </Button>
+            {!target && <p className="mt-1 text-center t-small text-[var(--ink-muted)]">Choose an output format to continue.</p>}
+            {target && detailsLoading && <p role="status" className="mt-1 text-center t-small text-[var(--ink-muted)]">Checking conversion plan…</p>}
             {blocking.length > 0 && (
               <p className="mt-1 text-center t-micro" style={{ color: "var(--fail)" }}>
                 {blocking[0].title}

@@ -34,6 +34,17 @@ restraint at Datadog's density in Postman's workspace shape.
 
 ## 2. Visual personality
 
+### Conversion workflow layout
+
+An empty workspace shows one file drop area with a short explanation. The queue,
+output selector and plan appear after files are added. At widths below 1280px,
+keep the conversion action visible at the bottom and allow the plan/results body
+to expand above it; never hide the only action or result access. Below 768px,
+stack input and output settings in a scrolling area above that action bar.
+Output choices include readable format descriptions and missing-pack messages.
+Pane headings use secondary ink, not tertiary ink. Result rows expose every
+output through an expandable list and compare actual input/output byte counts.
+
 The application is a **workbench**, not a product page. It should look like it
 was made by people who convert files all day and got tired of everything else.
 

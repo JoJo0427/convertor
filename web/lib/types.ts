@@ -171,6 +171,7 @@ export interface OutputFile {
   formatId: string;
   formatLabel: string;
   previewable: boolean;
+  previewKind?: "image" | "audio" | "video" | "document";
 }
 
 export type ItemStatus =

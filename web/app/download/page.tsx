@@ -145,7 +145,7 @@ export default function DownloadPage() {
   return (
     <main id="main" className="mx-auto w-full max-w-[640px] px-4 py-10">
       <header className="mb-7">
-        <h1 className="t-title">Download</h1>
+        <h1 className="t-title">Media downloader</h1>
         <p className="mt-1 t-small text-[var(--ink-muted)]">
           Save a video or its audio from a link. This is the only part of
           Convertor that uses the internet — everything else stays on this
