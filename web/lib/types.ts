@@ -423,3 +423,30 @@ export interface DownloadOverview {
   qualities: DownloadQuality[];
   downloads: Download[];
 }
+
+/* -------------------------------------------------- value converters */
+
+export interface RateTable {
+  base: string;
+  rates: Record<string, number>;
+  /** When the source published these rates, in its own words. */
+  published: string;
+  source: string;
+  ageSeconds: number;
+  /** True when the rates could not be refreshed and are being served from cache. */
+  stale: boolean;
+  currencies: string[];
+}
+
+export interface RateConversion {
+  amount: number;
+  from: string;
+  to: string;
+  rate: number;
+  result: number;
+  published: string;
+  source: string;
+  ageSeconds: number;
+  stale: boolean;
+  currencies: string[];
+}
