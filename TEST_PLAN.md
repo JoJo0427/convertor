@@ -871,3 +871,34 @@ worth writing down.
 Low severity — the document is readable and printable — but a report nobody can
 search is diminished, and the fix is a renderer font option rather than anything
 structural.
+
+## Workspace usability regression checks (2026-09-30)
+
+- With an empty queue, show one file drop area; keep paste input and upload errors accessible.
+- At 1440px, show all three panes. At 900px and 375px, keep the conversion/result action visible and allow plan details to expand above it. The page must not overflow horizontally.
+- Change quality or resize settings: keep the focused input mounted while the plan refreshes, and disable both Convert and Cmd/Ctrl+Enter until that exact plan is ready.
+- A missing engine, blocking warning, empty queue, running job, or existing result must prevent keyboard submission just as it prevents button submission. Repeated shortcuts must not submit duplicate jobs.
+- Expand warning details automatically on narrow screens; do not hide information about data loss or external AI processing behind the collapsed panel.
+- Convert a PNG to WebP: show actual input/output sizes and load both images in Compare images.
+- Extract a ZIP containing five files: initially show three outputs, then reveal all five with Show all 5 files. Each output must retain its download link.
+- Select a less-common format in Browse all: retain that selected format in the main picker with its description and pack requirements.
+- Verify Media downloader remains separate from converted-file downloads.
+
+Automated submission regressions: `cd web && npm test`.
+Manual checks completed against an isolated engine workspace: PNG→WebP, repeated
+keyboard submission, image previews, five-file ZIP extraction, and responsive
+layouts at 1440px, 900px and 375px. Both preview images loaded at their actual
+800px source width; the 375px viewport had no horizontal overflow and the action
+footer remained inside the viewport.
+
+## Media preview return path (2026-09-30)
+
+- Desktop output filenames and preview buttons must open a modal viewer, never navigate the app webview to `/api/outputs`.
+- Convert WAV→MP3 and MOV→MP4, open each preview, then use Back to conversion and Escape. The URL, queue, settings and results must stay intact; closing removes the player and restores focus to its preview trigger.
+- Unsupported playback must show an error inside the viewer while Back remains available.
+- Desktop Show file uses the Tauri bridge; browser downloads retain attachment behavior. Keep `app.withGlobalTauri` enabled to match `web/lib/desktop.ts`.
+- HTML/document previews remain inside a sandboxed frame and cannot navigate the parent workspace.
+
+Verified WAV→MP3 playback, Back and Escape; MOV→MP4 decoded at 320×240 with
+readyState 4 and returned to the same results. Automated checks: `cd web && npm test`
+and `desktop/runtime/bin/python3 tests/test_preview_metadata.py`.

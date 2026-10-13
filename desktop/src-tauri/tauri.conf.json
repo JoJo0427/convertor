@@ -8,6 +8,7 @@
     "beforeBuildCommand": "npm --prefix ../web run build:desktop"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "Convertor",

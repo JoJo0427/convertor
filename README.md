@@ -73,14 +73,19 @@ ffmpeg -nostdin -y -i clip.mp4 -c:v libvpx-vp9 -crf 23 -b:v 0 -row-mt 1 \
 
 ## Choosing an output
 
-Three ways in, because people arrive knowing different things:
+Two ways to choose an output:
 
-- **By goal** — "make it smaller", "make it editable", "put it on a website".
-  The tool picks the format.
 - **By recent use** — what you converted to last, drawn from history rather than
   kept as separate state, so clearing history clears this too.
 - **By format** — the ranked recommendations, with every reachable format one
-  click away in a searchable browser.
+  click away in a searchable browser. Choices show what each format is for and
+  any required engine pack without needing to hover.
+
+The empty workspace starts with one file drop area. Once files are added, the
+input queue, output choices and conversion plan appear. In narrower windows the
+conversion action stays at the bottom, with an expandable plan and results panel.
+Results include input/output sizes, expandable output lists, and side-by-side
+previews for browser-supported image conversions.
 
 ## What the workspace shows you before it runs
 

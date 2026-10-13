@@ -46,10 +46,11 @@ class OutputFile:
             "size": self.size,
             "formatId": self.format_id,
             "formatLabel": fmt.label if fmt else self.format_id,
-            "previewable": self.format_id in (
+            "previewKind": fmt.category if fmt and fmt.category in ("image", "audio", "video") else "document",
+            "previewable": (bool(fmt and fmt.category in ("image", "audio", "video")) or self.format_id in (
                 "png", "jpeg", "webp", "gif", "svg", "pdf", "txt", "md", "csv",
                 "json", "html", "yaml", "xml", "md_table",
-            ),
+            )),
         }
 
 
