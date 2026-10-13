@@ -11,6 +11,8 @@ import type {
   Pack,
   PackJob,
   PackSummary,
+  RateConversion,
+  RateTable,
   Plan,
   PlanDetails,
   Preset,
@@ -198,6 +200,11 @@ export const api = {
   }) => request<{ download: Download }>("/api/download", json(body)),
   cancelDownload: (id: string) =>
     request<{ download: Download | null }>(`/api/download/${id}/cancel`, json({})),
+
+  rates: (base = "USD", refresh = false) =>
+    request<RateTable>(`/api/rates?base=${encodeURIComponent(base)}&refresh=${refresh}`),
+  convertCurrency: (amount: number, from: string, to: string) =>
+    request<RateConversion>("/api/rates/convert", json({ amount, from, to })),
 
   storage: () => request<StorageStats>("/api/storage"),
   cleanStorage: (scopes: string[]) =>
