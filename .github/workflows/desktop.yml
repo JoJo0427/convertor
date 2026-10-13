@@ -93,10 +93,19 @@ jobs:
           # engines.py resolves by the Unix binary name plus ".exe", so each
           # file has to land under the name it looks for: Ghostscript ships as
           # gswin64c.exe and would never be found as "gs".
-          choco install --no-progress -y ghostscript potrace
+          # One missing package must not abort the step: the completeness gate
+          # below decides what is actually fatal, and it names what is missing.
+          choco install --no-progress -y ghostscript || true
           gs=$(find /c/Program\ Files /c/ProgramData/chocolatey -name gswin64c.exe 2>/dev/null | head -1)
           [ -n "$gs" ] && cp "$gs" desktop/src-tauri/binaries/gs.exe
-          pot=$(find /c/Program\ Files /c/ProgramData/chocolatey -name potrace.exe 2>/dev/null | head -1)
+
+          # potrace is not on Chocolatey - the first run of this workflow failed
+          # here, on `choco install potrace`, because the package does not exist.
+          # The project publishes its own Windows build, so take that.
+          curl -sL https://potrace.sourceforge.net/download/1.16/potrace-1.16.win64.zip \
+            -o /tmp/potrace.zip
+          unzip -q -o /tmp/potrace.zip -d /tmp/potrace
+          pot=$(find /tmp/potrace -name potrace.exe 2>/dev/null | head -1)
           [ -n "$pot" ] && cp "$pot" desktop/src-tauri/binaries/potrace.exe
 
           # librsvg has no standalone Windows build. MSYS2 is preinstalled on the
