@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from . import (capabilities, config, converters, db, detect, downloader, engines,
-               formats, installer, jobs, packs, registry)
+               formats, installer, jobs, packs, rates, registry)
 from .errors import ConversionError
 
 
@@ -321,6 +321,39 @@ async def download_events(download_id: str):
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
     })
+
+
+# ------------------------------------------------------------------ currency
+#
+# The value converters are arithmetic and run in the browser. Rates are the one
+# exception: they come from someone else's server, so they are handled here where
+# the network boundary is visible, cached, and dated.
+
+
+@app.get("/api/rates")
+async def rate_table(base: str = Query("USD"), refresh: bool = Query(False)) -> dict:
+    try:
+        table = await asyncio.to_thread(rates.table_for, base, refresh=refresh)
+    except ConversionError as error:
+        raise HTTPException(status_code=503, detail={"error": error.to_dict()})
+    return table.to_dict()
+
+
+@app.post("/api/rates/convert")
+async def rate_convert(payload: dict = Body(...)) -> dict:
+    try:
+        return await asyncio.to_thread(
+            rates.convert,
+            float(payload.get("amount", 0) or 0),
+            str(payload.get("from", "USD")),
+            str(payload.get("to", "EUR")),
+        )
+    except ConversionError as error:
+        raise HTTPException(status_code=503, detail={"error": error.to_dict()})
+    except (TypeError, ValueError):
+        raise _fail(400, "bad_amount", "That is not a number",
+                    "The amount to convert could not be read as a number.",
+                    ["Enter a plain number, such as 12.50."])
 
 
 @app.get("/api/health")
